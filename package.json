@@ -18,9 +18,13 @@
   "homepage": "https://github.com/edtela/jsqn#readme",
   "main": "index.js",
   "scripts": {
-    "test": "test"
+    "build": "tsc",
+    "test": "jasmine --config=jasmine.json",
+    "clean": "rm -r dist || true"
   },
   "devDependencies": {
+    "@types/jasmine": "^3.10.3",
+    "jasmine": "^4.0.2",
     "typescript": "^4.5.5"
   }
 }
