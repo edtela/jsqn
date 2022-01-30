@@ -1,0 +1,23 @@
+{
+  "name": "jsqn",
+  "version": "0.0.1",
+  "description": "JSON Query Language",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edtela/jsqn.git"
+  },
+  "keywords": [
+    "JSON",
+    "typescript"
+  ],
+  "author": "Edvin Tela",
+  "license": "BSD-3-Clause",
+  "bugs": {
+    "url": "https://github.com/edtela/jsqn/issues"
+  },
+  "homepage": "https://github.com/edtela/jsqn#readme",
+  "main": "index.js",
+  "scripts": {
+    "test": "test"
+  }
+}
