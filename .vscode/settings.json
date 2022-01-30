@@ -1,0 +1,8 @@
+{
+    "prettier.printWidth": 120,
+    "editor.wordWrap": "wordWrapColumn",
+    "editor.wrappingIndent": "same",
+    "editor.wordWrapColumn": 120,
+
+    "licenser.license": "BSD3"
+}
