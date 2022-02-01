@@ -1,4 +1,6 @@
 {
+    "prettier.singleQuote": true,
+    
     "prettier.printWidth": 120,
     "editor.wordWrap": "wordWrapColumn",
     "editor.wrappingIndent": "same",

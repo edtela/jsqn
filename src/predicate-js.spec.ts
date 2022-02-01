@@ -2,28 +2,29 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-import { Predicate } from "./predicate";
-import { compilePredicate, DefaultPredicateResolver } from "./predicate-js";
+import { Predicate } from './predicate';
+import { DefaultPredicateResolver } from './predicate-js';
 
+const resolver = new DefaultPredicateResolver();
 function compile(p: Predicate) {
-  return compilePredicate(p, new DefaultPredicateResolver());
+  return resolver.compile(p);
 }
 
-describe("NOT predicate", () => {
-  const resolver = it("should negate the result of resolver", () => {
-    const fn = compile({ "!": 5 });
+describe('NOT predicate', () => {
+  it('should negate the result of resolver', () => {
+    const fn = compile({ '!': 5 });
     expect(fn(5)).toBeFalse();
     expect(fn(6)).toBeTrue();
   });
 });
 
-describe("OR predicate", () => {
-  it("should produce false when array is empty", () => {
+describe('OR predicate', () => {
+  it('should produce false when array is empty', () => {
     const fn = compile([]);
     expect(fn(5)).toBeFalse();
   });
 
-  it("should produce false when no predicate matches", () => {
+  it('should produce false when no predicate matches', () => {
     let fn = compile([4]);
     expect(fn(5)).toBeFalse();
 
@@ -31,20 +32,20 @@ describe("OR predicate", () => {
     expect(fn(5)).toBeFalse();
   });
 
-  it("should produce true when at least one predicate matches", () => {
+  it('should produce true when at least one predicate matches', () => {
     let fn = compile([5]);
     expect(fn(5)).toBeTrue();
 
     fn = compile([5, 6]);
     expect(fn(5)).toBeTrue();
 
-    fn = compile(["a", "b", "a"]);
-    expect(fn("a")).toBeTrue();
+    fn = compile(['a', 'b', 'a']);
+    expect(fn('a')).toBeTrue();
   });
 });
 
-describe("AND predicate", () => {
-  it("should produce false when at least one value doesnt match", () => {
+describe('AND predicate', () => {
+  it('should produce false when at least one value doesnt match', () => {
     let fn = compile({ a: 5 });
     expect(fn({ a: 4, b: 6 })).toBeFalse();
     expect(fn({})).toBeFalse();
@@ -56,20 +57,20 @@ describe("AND predicate", () => {
     expect(fn({ a: undefined })).toBeFalse();
   });
 
-  it("should produce true for an empty predicate", () => {
+  it('should produce true for an empty predicate', () => {
     let fn = compile({});
     expect(fn({ a: 5 })).toBeTrue();
     expect(fn(undefined)).toBeTrue();
     expect(fn(null)).toBeTrue();
   });
 
-  it("should produce false for undefined and null", () => {
+  it('should produce false for undefined and null', () => {
     let fn = compile({ a: true });
     expect(fn(undefined)).toBeFalse();
     expect(fn(null)).toBeFalse();
   });
 
-  it("should produce true when all values match", () => {
+  it('should produce true when all values match', () => {
     let fn = compile({ a: 5 });
     expect(fn({ a: 5 })).toBeTrue();
 
@@ -78,19 +79,19 @@ describe("AND predicate", () => {
   });
 });
 
-describe("compilePredicate", () => {
-  it("should produce true when all values match", () => {
+describe('compilePredicate', () => {
+  it('should produce true when all values match', () => {
     const fn = compile({
       a: {
         a: [5, 7],
         b: 6,
       },
       b: {
-        a: [{ "<": 5 }, { ">": 7 }],
+        a: [{ '<': 5 }, { '>': 7 }],
         b: {
-          "!": [5, 6],
-          ">=": 5,
-          "<=": 7,
+          '!': [5, 6],
+          '>=': 5,
+          '<=': 7,
         },
       },
     });

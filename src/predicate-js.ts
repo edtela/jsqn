@@ -2,16 +2,17 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-import { AndPredicate, isValuePredicate, NOT_OP, OrPredicate, Predicate } from "./predicate";
+import { AndPredicate, isValuePredicate, NOT_OP, OrPredicate, Predicate } from './predicate';
 
 export type PredicateFn = (v: any) => boolean;
 export type PredicateCompiler = (p: Predicate, r: PredicateResolver) => PredicateFn;
 
 export interface PredicateResolver {
+  compile(p: Predicate): PredicateFn;
   resolveKey(k: string): undefined | PredicateCompiler;
 }
 
-export const compilePredicate: PredicateCompiler = (p: Predicate, r: PredicateResolver) => {
+export function compilePredicate(p: Predicate, r: PredicateResolver): PredicateFn {
   if (isValuePredicate(p)) {
     return (v: any) => v == p;
   }
@@ -21,16 +22,16 @@ export const compilePredicate: PredicateCompiler = (p: Predicate, r: PredicateRe
   }
 
   return compileAnd(p, r);
-};
+}
 
-function compileAnd(p: AndPredicate, r: PredicateResolver): PredicateFn {
+export function compileAnd(p: AndPredicate, r: PredicateResolver): PredicateFn {
   const andFns: PredicateFn[] = Object.keys(p).map((k) => {
     const resolvedFn = r.resolveKey(k);
     if (resolvedFn != null) {
       return resolvedFn(p[k], r);
     }
 
-    const valueFn = compilePredicate(p[k], r);
+    const valueFn = r.compile(p[k]);
     return (v) => valueFn(v == null ? v : v[k]);
   });
 
@@ -45,12 +46,12 @@ function compileAnd(p: AndPredicate, r: PredicateResolver): PredicateFn {
   return (v) => andFns.findIndex((fn) => !fn(v)) < 0;
 }
 
-function compileOr(p: OrPredicate, r: PredicateResolver): PredicateFn {
+export function compileOr(p: OrPredicate, r: PredicateResolver): PredicateFn {
   const orFns: PredicateFn[] = p.map((or) => {
     if (Array.isArray(or)) {
-      throw Error("NYI");
+      throw Error('NYI');
     }
-    return compilePredicate(or, r);
+    return r.compile(or);
   });
 
   if (orFns.length === 0) {
@@ -64,14 +65,14 @@ function compileOr(p: OrPredicate, r: PredicateResolver): PredicateFn {
   return (v) => orFns.findIndex((fn) => fn(v)) >= 0;
 }
 
-const notCompiler: PredicateCompiler = (p: Predicate, r: PredicateResolver) => {
-  const fn = compilePredicate(p, r);
+export const notCompiler: PredicateCompiler = (p, r) => {
+  const fn = r.compile(p);
   return (v) => !fn(v);
 };
 
-const regExpCompiler: PredicateCompiler = (p: Predicate, r: PredicateResolver) => {
-  if (typeof p !== "string") {
-    throw Error("NYI");
+const regExpCompiler: PredicateCompiler = (p, r) => {
+  if (typeof p !== 'string') {
+    throw Error('NYI');
   }
 
   const rx = new RegExp(p);
@@ -83,9 +84,9 @@ const compareCompilers: PredicateCompiler[] = [
   (p: any) => (v: any) => v <= p,
   (p: any) => (v: any) => v >= p,
   (p: any) => (v: any) => v > p,
-].map((fn) => (p: Predicate) => {
-  if (typeof p === "object") {
-    throw Error("NYI");
+].map((fn) => (p) => {
+  if (typeof p === 'object') {
+    throw Error('NYI');
   }
   return fn(p);
 });
@@ -93,11 +94,15 @@ const compareCompilers: PredicateCompiler[] = [
 export class DefaultPredicateResolver implements PredicateResolver {
   protected compilers: { [op: string]: PredicateCompiler } = {};
 
-  constructor(notOp = NOT_OP, compareOps = ["<", "<=", ">=", ">"], regExpOp = "~") {
+  constructor(notOp = NOT_OP, compareOps = ['<', '<=', '>=', '>'], regExpOp = '~') {
     this.compilers[notOp] = notCompiler;
     this.compilers[regExpOp] = regExpCompiler;
 
     compareOps.forEach((op, i) => (this.compilers[op] = compareCompilers[i]));
+  }
+
+  compile(p: Predicate): PredicateFn {
+    return compilePredicate(p, this);
   }
 
   resolveKey(k: string): undefined | PredicateCompiler {

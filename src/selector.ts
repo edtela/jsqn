@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-export type TerminalSelector = boolean | string;
+export type TerminalSelector = null | boolean | string | number;
+
+export function isTerminalSelector(p: Selector): p is TerminalSelector {
+  return p == null || typeof p != 'object';
+}
 
 export interface FieldSelector {
   [prop: string]: Selector;
@@ -10,4 +14,4 @@ export interface FieldSelector {
 
 export type ComplexSelector = Array<Selector>;
 
-export type Selector = FieldSelector;
+export type Selector = TerminalSelector | FieldSelector | ComplexSelector;
