@@ -20,6 +20,7 @@
   "scripts": {
     "build": "tsc",
     "test": "jasmine --config=jasmine.json",
+    "clean-test": "tsc && npm run test",
     "clean": "rm -r dist || true"
   },
   "devDependencies": {

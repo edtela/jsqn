@@ -190,6 +190,13 @@ function compileFieldSelector(s: FieldSelector, r: SelectorResolver): SelectorFn
       } else {
         const aSrc = Array.isArray(src) ? src : [src];
         fns.forEach((f) => f(aSrc, dest));
+
+        // fill empty items
+        for (let i = 0; i < dest.length; i++) {
+          if (dest[i] == null) {
+            dest[i] = null;
+          }
+        }
       }
       return dest;
     };
