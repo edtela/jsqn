@@ -9,6 +9,10 @@ export const ALL_OP = '*';
 
 export type SelectorFn = (v: Data) => Data;
 
+function cloneFn(v: Data): Data {
+  return JSON.parse(JSON.stringify(v));
+}
+
 export interface SelectorResolver {
   resolveFunction(name: string): undefined | SelectorFn;
   resolveKey(key: string): string | number;
@@ -95,154 +99,275 @@ function toInstructionX(s: ComplexSelector, destKey: string | number): Instructi
   return { type: 'chain', first: toInstruction(first, destKey), next: rest };
 }
 
-// COPY
-
-type OACopy = (src: ObjectData | null, dest: ArrayData, nullValue?: TerminalData) => Data;
-function oaCopy(srcKey: string, destKey: number): OACopy {
-  return (src, dest, nullValue = null) => (dest[destKey] = src?.[srcKey] ?? nullValue);
-}
-
-type AACopy = (src: ArrayData | null, dest: ArrayData, nullValue?: TerminalData) => Data;
-function aaCopy(srcKey: number, destKey: number): AACopy {
-  return (src, dest, nullValue = null) => (dest[destKey] = src?.[srcKey] ?? nullValue);
-}
-
-type AOCopy = (src: ArrayData | null, dest: ObjectData, nullValue?: TerminalData) => Data;
-function aoCopy(srcKey: number, destKey: string): AOCopy {
-  return (src, dest, nullValue = null) => (dest[destKey] = src?.[srcKey] ?? nullValue);
-}
-
-type OOCopy = (src: ObjectData | null, dest: ObjectData, nullValue?: TerminalData) => Data;
-function ooCopy(srcKey: string, destKey: string): OOCopy {
-  return (src, dest, nullValue = null) => (dest[destKey] = src?.[srcKey] ?? nullValue);
-}
-
 function compileFieldSelector(s: FieldSelector, r: SelectorResolver): SelectorFn {
-  const instructions = Object.keys(s).map((key) => {
+  const writer = new Copier();
+  Object.keys(s).forEach((key) => {
     const resolvedKey = r.resolveKey(key);
-    return toInstruction(s[key], resolvedKey);
-  });
-
-  const copyFns: [OACopy[], AACopy[], AOCopy[], OOCopy[]] = [[], [], [], []];
-
-  instructions.forEach((t) => {
-    if (t.type === 'copy') {
-      if (typeof t.srcKey === 'string') {
-        if (typeof t.destKey === 'number') {
-          copyFns[0].push(oaCopy(t.srcKey, t.destKey));
-        } else {
-          copyFns[3].push(ooCopy(t.srcKey, t.destKey));
-        }
-      } else {
-        if (typeof t.destKey === 'number') {
-          copyFns[1].push(aaCopy(t.srcKey, t.destKey));
-        } else {
-          copyFns[2].push(aoCopy(t.srcKey, t.destKey));
-        }
-      }
-    } else if (t.type === 'exclude') {
-    } else {
-      console.error(t);
-      throw Error('NYI');
+    const instr = toInstruction(s[key], resolvedKey);
+    if (instr.type === 'copy') {
+      writer.addCopy(instr.destKey, new Reader(instr.srcKey));
+    } else if (instr.type === 'select') {
+      writer.addCopy(resolvedKey, new Reader(resolvedKey, instr.selector));
     }
   });
 
-  const copier = copyFns.filter((c) => c.length > 0);
-  if (copier.length > 1) {
-    throw Error('INCOMPATIBLE');
-  }
+  return writer.compile(r);
+}
 
-  if (copyFns[0].length > 0) {
-    const fns = copyFns[0];
+type index = string | number;
 
-    const fn: SelectorFn = (src: Data) => {
-      if (Array.isArray(src)) {
-        return src.map((s) => fn(s));
-      }
+class Copier {
+  private compiler?: CopyCompiler<any, any>;
 
-      const dest: ArrayData = [];
-      if (isTerminal(src)) {
-        fns.forEach((f) => f(null, dest, src));
+  constructor(private logger: CompileLogger = new CompileLogger()) {}
+
+  private getOrCreateCompiler<S extends index, D extends index>(s: S, d: D): CopyCompiler<S, D> | undefined {
+    if (this.compiler == null) {
+      if (typeof s === 'string') {
+        if (typeof d === 'string') {
+          this.compiler = new O2OCompiler(this.logger);
+        } else {
+          this.compiler = new O2ACompiler(this.logger);
+        }
       } else {
-        fns.forEach((f) => f(src, dest));
-      }
-
-      // fill empty items
-      for (let i = 0; i < dest.length; i++) {
-        if (dest[i] == null) {
-          dest[i] = null;
+        if (typeof d === 'string') {
+          this.compiler = new A2OCompiler(this.logger);
+        } else {
+          this.compiler = new A2ACompiler(this.logger);
         }
       }
+    }
 
-      return dest;
-    };
-
-    return fn;
+    if (this.compiler.srcType === typeof s && this.compiler.destType === typeof d) {
+      return this.compiler;
+    }
   }
 
-  if (copyFns[1].length > 0) {
-    const fns = copyFns[1];
+  addCopy<S extends index, D extends index>(destKey: D, reader: Reader<S>) {
+    const compiler = this.getOrCreateCompiler(reader.key, destKey);
+    if (compiler == null) {
+      this.logger.incompatibleTypes(`${reader.key} -> ${destKey}`);
+    } else {
+      compiler.add(destKey, reader);
+    }
+  }
 
-    const fn = (src: Data) => {
+  compile(resolver: SelectorResolver) {
+    return this.compiler?.compile(resolver) ?? ((v: any) => null);
+  }
+}
+
+abstract class CopyCompiler<S extends index, D extends index> {
+  protected readers = new Map<D, Reader<S> | false>();
+  protected all?: { fn?: SelectorFn };
+
+  constructor(readonly srcType: string, readonly destType: string, readonly logger: CompileLogger) {}
+
+  add(key: D, reader: Reader<S>) {
+    this.setKey(key, reader);
+  }
+
+  exclude(key: D) {
+    this.setKey(key, false);
+  }
+
+  selectAll(fn?: SelectorFn) {
+    this.all = { fn: fn };
+  }
+
+  protected setKey(key: D, value: Reader<S> | false) {
+    if (this.readers.has(key)) {
+      this.logger.multipleWrites(key);
+    }
+    this.readers.set(key, value);
+  }
+
+  resolveReaders(resolver: SelectorResolver) {
+    const resolved: { srcKey: S; destKey: D; fn?: SelectorFn }[] = [];
+    const selectAll = this.all ? { fn: this.all.fn, excluded: new Set<D>() } : undefined;
+
+    for (let [key, reader] of this.readers) {
+      if (reader === false) {
+        if (selectAll) selectAll.excluded.add(key);
+      } else {
+        const fn = reader.compile(resolver);
+        resolved.push({ destKey: key, srcKey: reader.key, fn: fn });
+      }
+    }
+
+    return { resolved: resolved, selectAll: selectAll };
+  }
+
+  abstract compile(resolver: SelectorResolver): SelectorFn;
+}
+
+abstract class ToArrayCompiler<S extends index> extends CopyCompiler<S, number> {
+  constructor(readonly srcType: string, readonly logger: CompileLogger) {
+    super(srcType, 'number', logger);
+  }
+
+  resolveReaders(resolver: SelectorResolver) {
+    const { resolved, selectAll } = super.resolveReaders(resolver);
+
+    const negative = resolved.filter((v) => v.destKey < 0).sort((a, b) => a.destKey - b.destKey);
+    const positive = resolved.filter((v) => v.destKey >= 0);
+
+    const readers = [];
+    positive.forEach((p) => (readers[p.destKey] = p));
+
+    for (let i = 0, j = 0; i < negative.length; i++) {
+      while (readers[j] !== undefined) j++;
+      readers[j] = negative[i];
+    }
+
+    return { resolved: readers, selectAll: selectAll };
+  }
+
+  abstract compile(resolver: SelectorResolver): SelectorFn;
+}
+
+class A2ACompiler extends ToArrayCompiler<number> {
+  constructor(readonly logger: CompileLogger) {
+    super('number', logger);
+  }
+
+  compile(resolver: SelectorResolver) {
+    const { resolved, selectAll } = this.resolveReaders(resolver);
+
+    return (src: Data) => {
       const dest: ArrayData = [];
       if (isTerminal(src)) {
-        fns.forEach((f) => f(null, dest, src));
+        for (let i = 0; i < resolved.length; i++) {
+          dest[i] = resolved[i] ? src : null;
+        }
       } else {
         const aSrc = Array.isArray(src) ? src : [src];
-        fns.forEach((f) => f(aSrc, dest));
+        for (let destIndex = 0; destIndex < resolved.length; destIndex++) {
+          const r = resolved[destIndex];
+          if (r) {
+            const value = r.srcKey < 0 ? aSrc[aSrc.length + r.srcKey] : aSrc[r.srcKey];
+            dest[destIndex] = r.fn ? r.fn(value) : value;
+          } else if (selectAll && !selectAll.excluded.has(destIndex)) {
+            dest[destIndex] = aSrc[destIndex];
+          }
 
-        // fill empty items
-        for (let i = 0; i < dest.length; i++) {
-          if (dest[i] == null) {
-            dest[i] = null;
+          if (dest[destIndex] === undefined) {
+            dest[destIndex] = null;
+          }
+        }
+
+        if (selectAll) {
+          for (let index = dest.length; index < aSrc.length; index++) {
+            if (!selectAll.excluded.has(index)) {
+              dest.push(aSrc[index] ?? null);
+            }
           }
         }
       }
       return dest;
     };
+  }
+}
 
-    return fn;
+class O2ACompiler extends ToArrayCompiler<string> {
+  constructor(readonly logger: CompileLogger) {
+    super('string', logger);
   }
 
-  if (copyFns[2].length > 0) {
-    const fns = copyFns[2];
-
-    const fn = (src: Data) => {
-      const dest: ObjectData = {};
-      if (isTerminal(src)) {
-        fns.forEach((f) => f(null, dest, src));
-      } else {
-        const aSrc = Array.isArray(src) ? src : [src];
-        fns.forEach((f) => f(aSrc, dest));
-      }
-      return dest;
-    };
-
-    return fn;
-  }
-
-  if (copyFns[3].length > 0) {
-    const fns = copyFns[3];
+  compile(resolver: SelectorResolver) {
+    const { resolved } = super.resolveReaders(resolver);
 
     const fn: SelectorFn = (src: Data) => {
       if (Array.isArray(src)) {
         return src.map((s) => fn(s));
       }
 
-      const dest: ObjectData = {};
+      const dest: ArrayData = [];
       if (isTerminal(src)) {
-        fns.forEach((f) => f(null, dest, src));
+        for (let i = 0; i < resolved.length; i++) {
+          dest[i] = resolved[i] ? src : null;
+        }
       } else {
-        fns.forEach((f) => f(src, dest));
+        for (let destIndex = 0; destIndex < resolved.length; destIndex++) {
+          const r = resolved[destIndex];
+          dest[destIndex] = r ? (r.fn ? r.fn(src[r.srcKey]) : src[r.srcKey]) ?? null : null;
+        }
       }
-
       return dest;
     };
 
     return fn;
   }
+}
 
-  throw Error('NOTHING DONE');
+class A2OCompiler extends CopyCompiler<number, string> {
+  constructor(readonly logger: CompileLogger) {
+    super('number', 'string', logger);
+  }
+
+  compile(resolver: SelectorResolver): SelectorFn {
+    const { resolved } = this.resolveReaders(resolver);
+
+    return function (src: Data) {
+      const dest: ObjectData = {};
+      if (isTerminal(src)) {
+        resolved.forEach((r) => (dest[r.destKey] = src));
+      } else {
+        const arrSrc = Array.isArray(src) ? src : [src];
+        for (let i = 0; i < resolved.length; i++) {
+          const { srcKey, destKey, fn } = resolved[i];
+          dest[destKey] = fn?.(arrSrc[srcKey]) ?? arrSrc[srcKey];
+        }
+      }
+      return dest;
+    };
+  }
+}
+
+class O2OCompiler extends CopyCompiler<string, string> {
+  constructor(readonly logger: CompileLogger) {
+    super('string', 'string', logger);
+  }
+
+  compile(resolver: SelectorResolver): SelectorFn {
+    const { resolved, selectAll } = this.resolveReaders(resolver);
+
+    const fn: SelectorFn = function (src: Data) {
+      if (Array.isArray(src)) {
+        return src.map((e) => fn(e));
+      }
+
+      const dest: ObjectData = {};
+      if (isTerminal(src)) {
+        resolved.forEach((r) => (dest[r.destKey] = src));
+      } else {
+        resolved.forEach((r) => {
+          dest[r.destKey] = (r.fn ? r.fn(src[r.srcKey]) : src[r.srcKey]) ?? null;
+        });
+
+        if (selectAll) {
+          Object.keys(src).forEach((k) => {
+            if (dest[k] === undefined && !selectAll.excluded.has(k)) {
+              dest[k] = selectAll.fn ? selectAll.fn(src[k]) : src[k];
+            }
+          });
+        }
+      }
+
+      return dest;
+    };
+    return fn;
+  }
+}
+
+class Reader<T extends string | number> {
+  constructor(readonly key: T, readonly selector?: FieldSelector) {}
+
+  compile(resolver: SelectorResolver): SelectorFn | undefined {
+    if (this.selector != null) {
+      return compileFieldSelector(this.selector, resolver);
+    }
+  }
 }
 
 export class DefaultSelectorResolver implements SelectorResolver {
@@ -263,5 +388,15 @@ export class DefaultSelectorResolver implements SelectorResolver {
       throw new Error('Method not implemented.');
     }
     return compileFieldSelector(s, this);
+  }
+}
+
+class CompileLogger {
+  multipleWrites(k: string | number) {
+    console.warn('Multiple writes: ', k);
+  }
+
+  incompatibleTypes(m: string) {
+    console.warn(`Incompatible types, ignoring: ${m}`);
   }
 }
