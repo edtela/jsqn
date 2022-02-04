@@ -48,7 +48,7 @@ describe('Copy Selector', () => {
 
   it('should copy array to object', () => {
     const source = [5, 6, 7];
-    const selector = { a: [0], b: 2 };
+    const selector = { a: [0], b: [2] };
     const expected = { a: 5, b: 7 };
 
     const result = resolver.compile(selector)(source);
@@ -57,7 +57,7 @@ describe('Copy Selector', () => {
 
   it('should copy array to array', () => {
     const source = [5, 6, 7];
-    const selector = { '1': [0], '2': 1 };
+    const selector = { '1': [0], '2': [1] };
     const expected = [null, 5, 6];
 
     const result = resolver.compile(selector)(source);
@@ -66,7 +66,7 @@ describe('Copy Selector', () => {
 
   it('should use negative indices to specify ordering', () => {
     const source = [5, 6, 7];
-    const selector = { '-1': [0], '-2': 1 };
+    const selector = { '-1': [0], '-2': [1] };
     const expected = [6, 5];
 
     const result = resolver.compile(selector)(source);
@@ -77,6 +77,21 @@ describe('Copy Selector', () => {
     const source = [5, 6, 7];
     const selector = { '-1': true, '-2': [] };
     const expected = [6, 7];
+
+    const result = resolver.compile(selector)(source);
+    expect(result).toDeepEqual(expected);
+  });
+});
+
+describe('Copy Selector', () => {
+  beforeEach(function () {
+    jasmine.addMatchers(customMatchers);
+  });
+
+  it('should call specified function', () => {
+    const source = [-5, -6, -7];
+    const selector = { 0: ['abs', [2]], 1: ['abs', []] };
+    const expected = [7, 6];
 
     const result = resolver.compile(selector)(source);
     expect(result).toDeepEqual(expected);

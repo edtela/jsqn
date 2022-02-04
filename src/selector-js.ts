@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-import { ArrayData, Data, isTerminal, ObjectData, TerminalData } from './data';
+import { ArrayData, Data, isTerminal, ObjectData } from './data';
 import { ComplexSelector, FieldSelector, isTerminalSelector, Selector } from './selector';
 
 export const ALL_OP = '*';
@@ -13,108 +13,152 @@ function cloneFn(v: Data): Data {
   return JSON.parse(JSON.stringify(v));
 }
 
+export interface ResolvedFunction {
+  fn: (...input: any) => Data;
+}
+
 export interface SelectorResolver {
-  resolveFunction(name: string): undefined | SelectorFn;
+  resolveFunction(name: string): ResolvedFunction;
   resolveKey(key: string): string | number;
 }
 
-// INSTRUCTION
-
-interface Exclude {
-  type: 'exclude';
-  srcKey: string | number;
+type index = string | number;
+function isIndex(v: unknown): v is index {
+  return typeof v === 'string' || typeof v === 'number';
 }
 
-interface Copy {
-  type: 'copy';
-  srcKey: string | number;
-  destKey: string | number;
+export interface CompileResult {
+  select: index | boolean;
+  fn?: SelectorFn;
 }
 
-interface Run {
-  type: 'run';
-  name: string;
-  args: ArrayData;
-}
-
-interface Select {
-  type: 'select';
-  selector: FieldSelector;
-}
-
-interface Chain {
-  type: 'chain';
-  first: Instruction;
-  next: Selector;
-}
-
-type Instruction = Exclude | Copy | Run | Select | Chain;
-
-function toInstruction(s: Selector, destKey: string | number): Instruction {
+function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
   if (s === false || s === null) {
-    return { type: 'exclude', srcKey: destKey };
+    return { select: false };
   }
 
   if (s === true) {
-    return { type: 'copy', srcKey: destKey, destKey: destKey };
+    return { select: true };
   }
 
   if (typeof s === 'number') {
-    return { type: 'copy', srcKey: s, destKey: destKey };
+    throw Error('NYI');
   }
 
   if (typeof s === 'string') {
-    return { type: 'run', name: s, args: [] };
+    throw Error('NYI');
   }
 
   if (Array.isArray(s)) {
-    return toInstructionX(s, destKey);
+    return compileComplexSelector(s, r);
   }
 
-  return { type: 'select', selector: s };
+  return compileFieldSelector(s, r);
 }
 
-function toInstructionX(s: ComplexSelector, destKey: string | number): Instruction {
+function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): CompileResult {
   if (s.length === 0) {
-    return toInstruction(true, destKey);
+    return compileSelector(true, r);
   }
 
   const first = s[0];
   if (s.length === 1) {
-    if (typeof first === 'string') {
-      return { type: 'copy', srcKey: first, destKey: destKey };
+    if (typeof first !== 'object') {
+      return { select: first };
     }
-    return toInstruction(first, destKey);
+    throw Error('NYI');
   }
 
   const rest = s.slice(1);
   if (typeof first === 'string') {
-    return { type: 'run', name: first, args: rest };
+    return compileFunction(first, rest, r);
   }
 
   if (rest.length === 1) {
-    return { type: 'chain', first: toInstruction(first, destKey), next: rest[0] };
+    //    return { type: 'chain', first: parseSelector(first, destKey), next: rest[0] };
   }
 
-  return { type: 'chain', first: toInstruction(first, destKey), next: rest };
+  //  return { type: 'chain', first: parseSelector(first, destKey), next: rest };
+
+  throw Error('NYI');
 }
 
-function compileFieldSelector(s: FieldSelector, r: SelectorResolver): SelectorFn {
-  const writer = new Copier();
-  Object.keys(s).forEach((key) => {
-    const resolvedKey = r.resolveKey(key);
-    const instr = toInstruction(s[key], resolvedKey);
-    if (instr.type === 'copy') {
-      writer.addCopy(instr.destKey, new Reader(instr.srcKey));
-    } else if (instr.type === 'select') {
-      writer.addCopy(resolvedKey, new Reader(resolvedKey, instr.selector));
+function compileFunction(fnName: string, fnArgs: ArrayData, resolver: SelectorResolver): CompileResult {
+  const parsedArgs: ({ type: 'select'; value: index | boolean } | { type: 'const'; value: any })[] = fnArgs.map((t) => {
+    if (Array.isArray(t)) {
+      if (t.length === 0) {
+        return { type: 'select', value: true };
+      }
+
+      if (t.length === 1) {
+        const t0 = t[0];
+
+        if (isIndex(t0)) return { type: 'select', value: t0 };
+        if (Array.isArray(t0)) return { type: 'const', value: t0 };
+
+        if (t0 != null && typeof t0 === 'object') {
+          return { type: 'const', value: compileSelector(t0, resolver).fn };
+        }
+
+        throw Error(`UNKNOWN ARG CASE: ${t0}`);
+      }
+    }
+
+    return { type: 'const', value: t };
+  });
+
+  const fn = resolver.resolveFunction(fnName)?.fn;
+  if (fn == null) {
+    throw Error('Unknown function: ' + fnName);
+  }
+
+  if (parsedArgs.length === 0) {
+    // special case: go straight to function
+    return { select: true, fn: fn };
+  }
+
+  if (parsedArgs.length === 1) {
+    const parsedArg = parsedArgs[0];
+    if (parsedArg.type === 'select') {
+      // special case: go straight to function
+      return { select: parsedArg.value, fn: fn };
+    }
+    throw Error(`TODO: NO ARG FUNCTION: ${fnName}`);
+  }
+
+  const argFns: [index | boolean, number][] = [];
+  const args: any[] = [];
+  parsedArgs.forEach((pa, i) => {
+    if (pa.type === 'select') {
+      argFns.push([pa.value, i]);
+    } else {
+      args[i] = pa.value;
     }
   });
 
-  return writer.compile(r);
+  if (argFns.length !== 1) {
+    throw Error(`TODO: NO-INPUT, MULTI-INPUT FUNCTION: ${fnName}`);
+  }
+
+  const [key, index] = argFns[0];
+  return {
+    select: key,
+    fn: function (v: Data) {
+      args[index] = v;
+      return fn(...args);
+    },
+  };
 }
 
-type index = string | number;
+function compileFieldSelector(s: FieldSelector, r: SelectorResolver): CompileResult {
+  const writer = new Copier();
+  Object.keys(s).forEach((key) => {
+    const resolvedKey = r.resolveKey(key);
+    writer.addCopy(resolvedKey, compileSelector(s[key], r));
+  });
+
+  return { select: true, fn: writer.compile(r) };
+}
 
 class Copier {
   private compiler?: CopyCompiler<any, any>;
@@ -143,12 +187,18 @@ class Copier {
     }
   }
 
-  addCopy<S extends index, D extends index>(destKey: D, reader: Reader<S>) {
-    const compiler = this.getOrCreateCompiler(reader.key, destKey);
+  addCopy(destKey: index, cr: CompileResult) {
+    if (cr.select === false) {
+      //TODO exclude
+      return;
+    }
+
+    const srcKey = cr.select === true ? destKey : cr.select;
+    const compiler = this.getOrCreateCompiler(srcKey, destKey);
     if (compiler == null) {
-      this.logger.incompatibleTypes(`${reader.key} -> ${destKey}`);
+      this.logger.incompatibleTypes(`${srcKey} -> ${destKey}`);
     } else {
-      compiler.add(destKey, reader);
+      compiler.add(srcKey, destKey, cr.fn);
     }
   }
 
@@ -158,13 +208,13 @@ class Copier {
 }
 
 abstract class CopyCompiler<S extends index, D extends index> {
-  protected readers = new Map<D, Reader<S> | false>();
+  protected readers = new Map<D, [S, SelectorFn?] | false>();
   protected all?: { fn?: SelectorFn };
 
   constructor(readonly srcType: string, readonly destType: string, readonly logger: CompileLogger) {}
 
-  add(key: D, reader: Reader<S>) {
-    this.setKey(key, reader);
+  add(srcKey: S, destKey: D, fn?: SelectorFn) {
+    this.setKey(destKey, [srcKey, fn]);
   }
 
   exclude(key: D) {
@@ -175,7 +225,7 @@ abstract class CopyCompiler<S extends index, D extends index> {
     this.all = { fn: fn };
   }
 
-  protected setKey(key: D, value: Reader<S> | false) {
+  protected setKey(key: D, value: [S, SelectorFn?] | false) {
     if (this.readers.has(key)) {
       this.logger.multipleWrites(key);
     }
@@ -190,8 +240,8 @@ abstract class CopyCompiler<S extends index, D extends index> {
       if (reader === false) {
         if (selectAll) selectAll.excluded.add(key);
       } else {
-        const fn = reader.compile(resolver);
-        resolved.push({ destKey: key, srcKey: reader.key, fn: fn });
+        const [srcKey, fn] = reader;
+        resolved.push({ destKey: key, srcKey: reader[0], fn: fn });
       }
     }
 
@@ -360,18 +410,11 @@ class O2OCompiler extends CopyCompiler<string, string> {
   }
 }
 
-class Reader<T extends string | number> {
-  constructor(readonly key: T, readonly selector?: FieldSelector) {}
-
-  compile(resolver: SelectorResolver): SelectorFn | undefined {
-    if (this.selector != null) {
-      return compileFieldSelector(this.selector, resolver);
-    }
-  }
-}
-
 export class DefaultSelectorResolver implements SelectorResolver {
-  resolveFunction(name: string): SelectorFn | undefined {
+  resolveFunction(name: string): ResolvedFunction {
+    if (name === 'abs') {
+      return { fn: Math.abs };
+    }
     throw new Error('Method not implemented.');
   }
 
@@ -387,7 +430,7 @@ export class DefaultSelectorResolver implements SelectorResolver {
     if (isTerminalSelector(s) || Array.isArray(s)) {
       throw new Error('Method not implemented.');
     }
-    return compileFieldSelector(s, this);
+    return compileFieldSelector(s, this).fn ?? ((v: Data) => null);
   }
 }
 
