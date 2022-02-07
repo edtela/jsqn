@@ -15,6 +15,8 @@ import {
   TerminalData,
 } from './data';
 import { getIndex, getKey } from './data-js';
+import { Predicate, PREDICATE_OP } from './predicate';
+import { DefaultPredicateResolver, PredicateFn } from './predicate-js';
 import { ComplexSelector, FieldSelector, isTerminalSelector, Selector } from './selector';
 
 export const ALL_OP = '*';
@@ -32,6 +34,7 @@ export interface ResolvedFunction {
 export interface SelectorResolver {
   resolveFunction(name: string): ResolvedFunction;
   resolveKey(key: string): string | number;
+  compilePredicate(p: Predicate): PredicateFn;
 }
 
 export interface CompileResult {
@@ -53,6 +56,7 @@ function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
   }
 
   if (typeof s === 'string') {
+    console.log(s);
     throw Error('TODO: grouping');
   }
 
@@ -88,8 +92,14 @@ function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): Compil
 
   const second = rest.length === 1 ? rest[0] : rest;
   const cr1 = compileSelector(first, r);
+  const cr2 = compileFieldSelector({ '0': second }, r);
 
-  return cr1;
+  //TODO
+  const fn = (v: Data) => {
+    return (<any>cr2.fn?.(v))?.[0];
+  };
+
+  return { select: cr1.select, fn: fn };
 }
 
 function compileFunction(fnName: string, fnArgs: ArrayData, resolver: SelectorResolver): CompileResult {
@@ -164,8 +174,12 @@ function compileFieldSelector(s: FieldSelector, r: SelectorResolver): CompileRes
 
   Object.keys(s).forEach((key) => {
     const dKey = r.resolveKey(key);
-    const cr = compileSelector(s[key], r);
+    if (dKey === PREDICATE_OP) {
+      compiler.filter(r.compilePredicate(s[key]));
+      return;
+    }
 
+    const cr = compileSelector(s[key], r);
     if (dKey === ALL_OP) {
       compiler.selectAll(cr.fn);
       return;
@@ -184,7 +198,8 @@ function compileFieldSelector(s: FieldSelector, r: SelectorResolver): CompileRes
 }
 
 function fieldCompiler(logger = new CompileLogger()) {
-  let all: { mapper?: SelectorFn } | undefined;
+  let all: { mapper?: SelectorFn };
+  let predicate: PredicateFn;
 
   type FieldMap<S, D> = Map<D, [S, SelectorFn?] | null>;
   function copier<S, D>(isS: (s: unknown) => s is S, isD: (s: unknown) => s is D) {
@@ -297,7 +312,7 @@ function fieldCompiler(logger = new CompileLogger()) {
           const [terminal, array] = writer(cp.fields, (src: ArrayData, idx: number) => {
             return idx < 0 ? src[src.length + idx] : src[idx];
           });
-          return arrayReader(terminal, array);
+          return arrayReader(terminal, array, predicate);
         }
 
         return { copier: cp, compile: compile };
@@ -344,7 +359,7 @@ function fieldCompiler(logger = new CompileLogger()) {
 
         function compile() {
           const { fields } = toFieldList(cp.fields);
-          return arrayReader(...writer(fields));
+          return arrayReader(...writer(fields), predicate);
         }
 
         return { copier: cp, compile: compile };
@@ -384,14 +399,21 @@ function fieldCompiler(logger = new CompileLogger()) {
   }
 
   function compile() {
-    return cpl === undefined ? (v: Data) => null : cpl.compile();
+    if (cpl === undefined) {
+      cpl = compiler().array().from.array();
+    }
+    return cpl.compile();
   }
 
   function selectAll(mapper?: SelectorFn) {
     all = { mapper: mapper };
   }
 
-  return { add: add, exclude: exclude, compile: compile, selectAll: selectAll };
+  function filter(p: PredicateFn) {
+    predicate = p;
+  }
+
+  return { add: add, exclude: exclude, compile: compile, selectAll: selectAll, filter: filter };
 }
 
 function objectReader<D extends Data>(tFn: (src: TerminalData) => D, oFn: (src: ObjectData) => D): SelectorFn {
@@ -409,17 +431,28 @@ function objectReader<D extends Data>(tFn: (src: TerminalData) => D, oFn: (src: 
   return fn;
 }
 
-function arrayReader(tFn: (src: TerminalData) => Data, aFn: (src: ArrayData) => Data): SelectorFn {
+function arrayReader(
+  tFn: (src: TerminalData) => Data,
+  aFn: (src: ArrayData) => Data,
+  predicate?: PredicateFn
+): SelectorFn {
   return (src: Data) => {
     if (isTerminal(src)) {
       return tFn(src);
     }
-    const aSrc = Array.isArray(src) ? src : src == null ? [] : [src];
+    let aSrc = Array.isArray(src) ? src : src == null ? [] : [src];
+    if (predicate) {
+      aSrc = aSrc.filter((e) => predicate(e));
+      console.log(src);
+      console.log(aSrc);
+    }
     return aFn(aSrc);
   };
 }
 
 export class DefaultSelectorResolver implements SelectorResolver {
+  predicateResolver = new DefaultPredicateResolver();
+
   resolveFunction(name: string): ResolvedFunction {
     if (name === 'abs') {
       return { fn: Math.abs };
@@ -440,6 +473,10 @@ export class DefaultSelectorResolver implements SelectorResolver {
       throw new Error('Method not implemented.');
     }
     return compileFieldSelector(s, this).fn ?? ((v: Data) => null);
+  }
+
+  compilePredicate(p: Predicate) {
+    return this.predicateResolver.compile(p);
   }
 }
 

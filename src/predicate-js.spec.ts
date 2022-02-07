@@ -54,19 +54,16 @@ describe('AND predicate', () => {
     expect(fn({ a: { a: 4, b: 6 } })).toBeFalse();
     expect(fn({ a: { b: 6 } })).toBeFalse();
     expect(fn({ a: null })).toBeFalse();
-    expect(fn({ a: undefined })).toBeFalse();
   });
 
   it('should produce true for an empty predicate', () => {
     let fn = compile({});
     expect(fn({ a: 5 })).toBeTrue();
-    expect(fn(undefined)).toBeTrue();
     expect(fn(null)).toBeTrue();
   });
 
   it('should produce false for undefined and null', () => {
     let fn = compile({ a: true });
-    expect(fn(undefined)).toBeFalse();
     expect(fn(null)).toBeFalse();
   });
 

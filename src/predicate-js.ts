@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+import { Data } from './data';
 import { AndPredicate, isValuePredicate, NOT_OP, OrPredicate, Predicate } from './predicate';
 
-export type PredicateFn = (v: any) => boolean;
+export type PredicateFn = (v: Data) => boolean;
 export type PredicateCompiler = (p: Predicate, r: PredicateResolver) => PredicateFn;
 
 export interface PredicateResolver {
@@ -32,7 +33,8 @@ export function compileAnd(p: AndPredicate, r: PredicateResolver): PredicateFn {
     }
 
     const valueFn = r.compile(p[k]);
-    return (v) => valueFn(v == null ? v : v[k]);
+    //FIXME
+    return (v) => valueFn(v == null ? v : (<any>v)[k]);
   });
 
   if (andFns.length === 0) {
