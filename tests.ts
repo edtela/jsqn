@@ -44,12 +44,23 @@ export const TEST_CASES: { comment: string; query?: Selector; result?: Data }[] 
   {
     comment: `In general anything inside **{}** represents the structure of the output. Anything inside **[]**
         is a transformation of the current object. Property access is the simplest transformation, and in the case of
-        empty **[]** the name of the property is taken from the query. So, *{ name: ['name'] }* and *{ name: [] }*
+        empty **[]** the name of the property is taken from the query. So, **{ name: ['name'] }** and **{ name: [] }**
         are equivalent`,
   },
   {
     comment: 'Transformations can be chained. The output of the first is input to the next',
     query: { 'Luna is': [['animals'], [0], ['is']] },
     result: { 'Luna is': 'feisty' },
+  },
+  {
+    comment: 'To assign a constant value, enclose it in double square brackets',
+    query: { static: [['This can be anything, including a static array']] },
+    result: { static: 'This can be anything, including a static array' },
+  },
+  {
+    comment:
+      'Custom or built-in functions can be used. The function syntax is **["function_name", ...args]**. The function name can be anywhere in a chain of transformations. Anything after the function name is an argument. If an argument is an array, it is resolved the same as other transformations',
+    query: { 'First Dog is': [['animals'], [0], 'uppercase', ['name']] },
+    result: { 'First Dog is': 'LUNA' },
   },
 ];

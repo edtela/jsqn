@@ -82,7 +82,14 @@ function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): Compil
       return { select: first };
     }
 
-    throw Error('NYI');
+    if (typeof first === 'object') {
+      if (Array.isArray(first)) {
+        return { select: true, fn: (v: Data) => first[0] };
+      }
+      return compileSelector(first, r);
+    }
+
+    throw Error('NYI: ' + first);
   }
 
   const rest = s.slice(1);
@@ -454,9 +461,14 @@ export class DefaultSelectorResolver implements SelectorResolver {
   predicateResolver = new DefaultPredicateResolver();
 
   resolveFunction(name: string): ResolvedFunction {
+    //TODO
     if (name === 'abs') {
       return { fn: Math.abs };
     }
+    if (name === 'uppercase') {
+      return { fn: (v: string) => v.toUpperCase() };
+    }
+
     throw new Error('Method not implemented.');
   }
 

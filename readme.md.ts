@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import { TEST_DATA, TEST_CASES } from './tests';
 
 const rx = /(\r\n|\n|\r|\s)+/gm;
-function stringify(o: any, maxCols = 100) {
+function stringify(o: any, maxCols = 200) {
   const s = JSON.stringify(o, null, 1);
   if (s.length > maxCols) {
     return s;
@@ -24,8 +24,8 @@ TEST_CASES.forEach((tc) => {
   lines.push(tc.comment.replace(rx, ' '));
   if (tc.query != null && tc.result != null) {
     lines.push('```');
-    lines.push(stringify(tc.query));
-    lines.push(stringify(tc.result));
+    lines.push('Query: ' + stringify(tc.query));
+    lines.push('Output: ' + stringify(tc.result));
     lines.push('```');
   }
 });
