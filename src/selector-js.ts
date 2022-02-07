@@ -14,14 +14,13 @@ import {
   ObjectData,
   TerminalData,
 } from './data';
-import { getIndex, getKey } from './data-js';
 import { Predicate, PREDICATE_OP } from './predicate';
 import { DefaultPredicateResolver, PredicateFn } from './predicate-js';
 import { ComplexSelector, FieldSelector, isTerminalSelector, Selector } from './selector';
 
 export const ALL_OP = '*';
 
-export type SelectorFn = (v: Data) => Data;
+export type SelectorFn = (v: Data) => Data | undefined;
 
 function cloneFn(v: Data): Data {
   return JSON.parse(JSON.stringify(v));
@@ -56,7 +55,6 @@ function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
   }
 
   if (typeof s === 'string') {
-    console.log(s);
     throw Error('TODO: grouping');
   }
 
@@ -340,19 +338,37 @@ function fieldCompiler(logger = new CompileLogger()) {
 
     function object() {
       function writer<S extends Index>(fields: FieldList<S, string>) {
-        function terminal(src: TerminalData): Data {
+        function terminal(src: TerminalData): Data | undefined {
+          if (predicate && !predicate(src)) {
+            return undefined;
+          }
+          if (fields.length === 0) {
+            return src;
+          }
+
           const dest: ObjectData = {};
-          fields.forEach((f) => (dest[f.dKey] = f.mapper ? f.mapper(src) : src));
+          fields.forEach((f) => (dest[f.dKey] = f.mapper ? f.mapper(src) ?? null : src));
           return dest;
         }
 
         function object(src: ArrayOrObject<S>) {
-          const dest: ObjectData = {};
+          if (predicate && !predicate(src)) {
+            return undefined;
+          }
 
+          const dest: ObjectData = {};
           for (let i = 0; i < fields.length; i++) {
             const { sKey, dKey, mapper } = fields[i];
-            const value = (<any>src)[sKey];
-            dest[dKey] = mapper?.(value) ?? value ?? null;
+            let value = (<any>src)[sKey];
+            if (mapper != null) {
+              value = mapper(value);
+            }
+
+            if (value === undefined) {
+              return undefined;
+            }
+
+            dest[dKey] = value;
           }
 
           return dest;
@@ -377,7 +393,7 @@ function fieldCompiler(logger = new CompileLogger()) {
 
         function compile() {
           const { fields } = toFieldList(cp.fields);
-          return objectReader(...writer(fields));
+          return objectReader(...writer(fields), predicate);
         }
 
         return { copier: cp, compile: compile };
@@ -407,7 +423,7 @@ function fieldCompiler(logger = new CompileLogger()) {
 
   function compile() {
     if (cpl === undefined) {
-      cpl = compiler().array().from.array();
+      cpl = compiler().object().from.object();
     }
     return cpl.compile();
   }
@@ -423,14 +439,29 @@ function fieldCompiler(logger = new CompileLogger()) {
   return { add: add, exclude: exclude, compile: compile, selectAll: selectAll, filter: filter };
 }
 
-function objectReader<D extends Data>(tFn: (src: TerminalData) => D, oFn: (src: ObjectData) => D): SelectorFn {
+function objectReader<D extends Data>(
+  tFn: (src: TerminalData) => D | undefined,
+  oFn: (src: ObjectData) => D | undefined,
+  predicate?: PredicateFn
+): SelectorFn {
   const fn: SelectorFn = (src: Data) => {
     if (Array.isArray(src)) {
-      return src.map((s) => fn(s));
+      const aDest: Data[] = [];
+      src.forEach((s) => {
+        const v = fn(s);
+        if (v !== undefined) {
+          aDest.push(v);
+        }
+      });
+      return aDest;
     }
 
     if (isTerminal(src)) {
       return tFn(src);
+    }
+
+    if (predicate && !predicate(src)) {
+      return undefined;
     }
 
     return oFn(src);
@@ -439,8 +470,8 @@ function objectReader<D extends Data>(tFn: (src: TerminalData) => D, oFn: (src: 
 }
 
 function arrayReader(
-  tFn: (src: TerminalData) => Data,
-  aFn: (src: ArrayData) => Data,
+  tFn: (src: TerminalData) => Data | undefined,
+  aFn: (src: ArrayData) => Data | undefined,
   predicate?: PredicateFn
 ): SelectorFn {
   return (src: Data) => {
@@ -450,8 +481,6 @@ function arrayReader(
     let aSrc = Array.isArray(src) ? src : src == null ? [] : [src];
     if (predicate) {
       aSrc = aSrc.filter((e) => predicate(e));
-      console.log(src);
-      console.log(aSrc);
     }
     return aFn(aSrc);
   };

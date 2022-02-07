@@ -22,9 +22,9 @@ lines.push('```');
 
 TEST_CASES.forEach((tc) => {
   lines.push(tc.comment.replace(rx, ' '));
-  if (tc.query != null && tc.result != null) {
+  if (tc.selector != null && tc.result != null) {
     lines.push('```');
-    lines.push('Query: ' + stringify(tc.query));
+    lines.push('Selector: ' + stringify(tc.selector));
     lines.push('Output: ' + stringify(tc.result));
     lines.push('```');
   }
