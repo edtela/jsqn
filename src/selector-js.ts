@@ -2,7 +2,19 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-import { ArrayData, Data, isTerminal, ObjectData } from './data';
+import {
+  ArrayData,
+  ArrayOrObject,
+  Data,
+  Index,
+  isIndex,
+  isNumber,
+  isString,
+  isTerminal,
+  ObjectData,
+  TerminalData,
+} from './data';
+import { getIndex, getKey } from './data-js';
 import { ComplexSelector, FieldSelector, isTerminalSelector, Selector } from './selector';
 
 export const ALL_OP = '*';
@@ -22,13 +34,8 @@ export interface SelectorResolver {
   resolveKey(key: string): string | number;
 }
 
-type index = string | number;
-function isIndex(v: unknown): v is index {
-  return typeof v === 'string' || typeof v === 'number';
-}
-
 export interface CompileResult {
-  select: index | boolean;
+  select: Index | boolean;
   fn?: SelectorFn;
 }
 
@@ -42,11 +49,11 @@ function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
   }
 
   if (typeof s === 'number') {
-    throw Error('NYI');
+    throw Error('TODO: grouping');
   }
 
   if (typeof s === 'string') {
-    throw Error('NYI');
+    throw Error('TODO: grouping');
   }
 
   if (Array.isArray(s)) {
@@ -63,9 +70,14 @@ function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): Compil
 
   const first = s[0];
   if (s.length === 1) {
-    if (typeof first !== 'object') {
+    if (typeof first === 'string') {
       return { select: first };
     }
+
+    if (typeof first === 'number') {
+      return { select: first };
+    }
+
     throw Error('NYI');
   }
 
@@ -74,17 +86,14 @@ function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): Compil
     return compileFunction(first, rest, r);
   }
 
-  if (rest.length === 1) {
-    //    return { type: 'chain', first: parseSelector(first, destKey), next: rest[0] };
-  }
+  const second = rest.length === 1 ? rest[0] : rest;
+  const cr1 = compileSelector(first, r);
 
-  //  return { type: 'chain', first: parseSelector(first, destKey), next: rest };
-
-  throw Error('NYI');
+  return cr1;
 }
 
 function compileFunction(fnName: string, fnArgs: ArrayData, resolver: SelectorResolver): CompileResult {
-  const parsedArgs: ({ type: 'select'; value: index | boolean } | { type: 'const'; value: any })[] = fnArgs.map((t) => {
+  const parsedArgs: ({ type: 'select'; value: Index | boolean } | { type: 'const'; value: any })[] = fnArgs.map((t) => {
     if (Array.isArray(t)) {
       if (t.length === 0) {
         return { type: 'select', value: true };
@@ -126,7 +135,7 @@ function compileFunction(fnName: string, fnArgs: ArrayData, resolver: SelectorRe
     throw Error(`TODO: NO ARG FUNCTION: ${fnName}`);
   }
 
-  const argFns: [index | boolean, number][] = [];
+  const argFns: [Index | boolean, number][] = [];
   const args: any[] = [];
   parsedArgs.forEach((pa, i) => {
     if (pa.type === 'select') {
@@ -151,263 +160,263 @@ function compileFunction(fnName: string, fnArgs: ArrayData, resolver: SelectorRe
 }
 
 function compileFieldSelector(s: FieldSelector, r: SelectorResolver): CompileResult {
-  const writer = new Copier();
+  const compiler = fieldCompiler();
+
   Object.keys(s).forEach((key) => {
-    const resolvedKey = r.resolveKey(key);
-    writer.addCopy(resolvedKey, compileSelector(s[key], r));
-  });
+    const dKey = r.resolveKey(key);
+    const cr = compileSelector(s[key], r);
 
-  return { select: true, fn: writer.compile(r) };
-}
-
-class Copier {
-  private compiler?: CopyCompiler<any, any>;
-
-  constructor(private logger: CompileLogger = new CompileLogger()) {}
-
-  private getOrCreateCompiler<S extends index, D extends index>(s: S, d: D): CopyCompiler<S, D> | undefined {
-    if (this.compiler == null) {
-      if (typeof s === 'string') {
-        if (typeof d === 'string') {
-          this.compiler = new O2OCompiler(this.logger);
-        } else {
-          this.compiler = new O2ACompiler(this.logger);
-        }
-      } else {
-        if (typeof d === 'string') {
-          this.compiler = new A2OCompiler(this.logger);
-        } else {
-          this.compiler = new A2ACompiler(this.logger);
-        }
-      }
-    }
-
-    if (this.compiler.srcType === typeof s && this.compiler.destType === typeof d) {
-      return this.compiler;
-    }
-  }
-
-  addCopy(destKey: index, cr: CompileResult) {
-    if (cr.select === false) {
-      //TODO exclude
+    if (dKey === ALL_OP) {
+      compiler.selectAll(cr.fn);
       return;
     }
 
-    const srcKey = cr.select === true ? destKey : cr.select;
-    const compiler = this.getOrCreateCompiler(srcKey, destKey);
-    if (compiler == null) {
-      this.logger.incompatibleTypes(`${srcKey} -> ${destKey}`);
-    } else {
-      compiler.add(srcKey, destKey, cr.fn);
+    if (cr.select === false) {
+      compiler.exclude(dKey);
+      return;
     }
-  }
 
-  compile(resolver: SelectorResolver) {
-    return this.compiler?.compile(resolver) ?? ((v: any) => null);
-  }
+    const sKey: Index = cr.select === true ? dKey : cr.select;
+    compiler.add(sKey, dKey, cr.fn);
+  });
+
+  return { select: true, fn: compiler.compile() };
 }
 
-abstract class CopyCompiler<S extends index, D extends index> {
-  protected readers = new Map<D, [S, SelectorFn?] | false>();
-  protected all?: { fn?: SelectorFn };
+function fieldCompiler(logger = new CompileLogger()) {
+  let all: { mapper?: SelectorFn } | undefined;
 
-  constructor(readonly srcType: string, readonly destType: string, readonly logger: CompileLogger) {}
+  type FieldMap<S, D> = Map<D, [S, SelectorFn?] | null>;
+  function copier<S, D>(isS: (s: unknown) => s is S, isD: (s: unknown) => s is D) {
+    const fields: FieldMap<S, D> = new Map();
 
-  add(srcKey: S, destKey: D, fn?: SelectorFn) {
-    this.setKey(destKey, [srcKey, fn]);
-  }
-
-  exclude(key: D) {
-    this.setKey(key, false);
-  }
-
-  selectAll(fn?: SelectorFn) {
-    this.all = { fn: fn };
-  }
-
-  protected setKey(key: D, value: [S, SelectorFn?] | false) {
-    if (this.readers.has(key)) {
-      this.logger.multipleWrites(key);
-    }
-    this.readers.set(key, value);
-  }
-
-  resolveReaders(resolver: SelectorResolver) {
-    const resolved: { srcKey: S; destKey: D; fn?: SelectorFn }[] = [];
-    const selectAll = this.all ? { fn: this.all.fn, excluded: new Set<D>() } : undefined;
-
-    for (let [key, reader] of this.readers) {
-      if (reader === false) {
-        if (selectAll) selectAll.excluded.add(key);
-      } else {
-        const [srcKey, fn] = reader;
-        resolved.push({ destKey: key, srcKey: reader[0], fn: fn });
+    function set(dKey: D, value: [S, SelectorFn?] | null) {
+      if (fields.has(dKey)) {
+        return logger.multipleWrites(dKey);
       }
+
+      fields.set(dKey, value);
+      return true;
     }
 
-    return { resolved: resolved, selectAll: selectAll };
-  }
-
-  abstract compile(resolver: SelectorResolver): SelectorFn;
-}
-
-abstract class ToArrayCompiler<S extends index> extends CopyCompiler<S, number> {
-  constructor(readonly srcType: string, readonly logger: CompileLogger) {
-    super(srcType, 'number', logger);
-  }
-
-  resolveReaders(resolver: SelectorResolver) {
-    const { resolved, selectAll } = super.resolveReaders(resolver);
-
-    const negative = resolved.filter((v) => v.destKey < 0).sort((a, b) => a.destKey - b.destKey);
-    const positive = resolved.filter((v) => v.destKey >= 0);
-
-    const readers = [];
-    positive.forEach((p) => (readers[p.destKey] = p));
-
-    for (let i = 0, j = 0; i < negative.length; i++) {
-      while (readers[j] !== undefined) j++;
-      readers[j] = negative[i];
+    function add(sKey: Index, dKey: Index, mapper?: SelectorFn) {
+      if (isS(sKey) && isD(dKey)) {
+        return set(dKey, [sKey, mapper]);
+      }
+      return logger.incompatibleTypes(`${sKey}->${dKey}`);
     }
 
-    return { resolved: readers, selectAll: selectAll };
+    function exclude(dKey: Index) {
+      if (isD(dKey)) {
+        return set(dKey, null);
+      }
+
+      logger.incompatibleTypes(`Exclude ${dKey}`);
+      return false;
+    }
+
+    return { add: add, exclude: exclude, fields: fields };
   }
 
-  abstract compile(resolver: SelectorResolver): SelectorFn;
-}
-
-class A2ACompiler extends ToArrayCompiler<number> {
-  constructor(readonly logger: CompileLogger) {
-    super('number', logger);
-  }
-
-  compile(resolver: SelectorResolver) {
-    const { resolved, selectAll } = this.resolveReaders(resolver);
-
-    return (src: Data) => {
-      const dest: ArrayData = [];
-      if (isTerminal(src)) {
-        for (let i = 0; i < resolved.length; i++) {
-          dest[i] = resolved[i] ? src : null;
+  function compiler() {
+    type FieldList<S, D> = { sKey: S; dKey: D; mapper?: SelectorFn }[];
+    function toFieldList<S, D>(map: FieldMap<S, D>) {
+      const fields: FieldList<S, D> = [];
+      const selectAll = all ? { allMapper: all.mapper, excluded: new Set<D>() } : undefined;
+      for (let [dKey, s] of map) {
+        if (s === null) {
+          if (selectAll) selectAll.excluded.add(dKey);
+        } else {
+          const [sKey, mapper] = s;
+          fields.push({ dKey: dKey, sKey: sKey, mapper: mapper });
         }
-      } else {
-        const aSrc = Array.isArray(src) ? src : [src];
-        for (let destIndex = 0; destIndex < resolved.length; destIndex++) {
-          const r = resolved[destIndex];
-          if (r) {
-            const value = r.srcKey < 0 ? aSrc[aSrc.length + r.srcKey] : aSrc[r.srcKey];
-            dest[destIndex] = r.fn ? r.fn(value) : value;
-          } else if (selectAll && !selectAll.excluded.has(destIndex)) {
-            dest[destIndex] = aSrc[destIndex];
-          }
+      }
+      return { fields: fields, all: selectAll };
+    }
 
-          if (dest[destIndex] === undefined) {
-            dest[destIndex] = null;
-          }
+    function array() {
+      function writer<S extends Index>(cp: FieldMap<S, number>, getter: (src: ArrayOrObject<S>, s: S) => Data) {
+        const { fields, all } = toFieldList(cp);
+
+        const readers: (undefined | { sKey: S; mapper?: SelectorFn })[] = [];
+        fields.filter((v) => v.dKey >= 0).forEach((p) => (readers[p.dKey] = p));
+        const requiredLength = readers.length;
+
+        const negative = fields.filter((v) => v.dKey < 0).sort((a, b) => b.dKey - a.dKey);
+        for (let i = 0, j = 0; i < negative.length; i++) {
+          while (readers[j] !== undefined) j++;
+          readers[j] = negative[i];
         }
 
-        if (selectAll) {
-          for (let index = dest.length; index < aSrc.length; index++) {
-            if (!selectAll.excluded.has(index)) {
-              dest.push(aSrc[index] ?? null);
+        function terminalFn(src: TerminalData) {
+          const dest: ArrayData = [];
+          for (let dKey = 0; dKey < readers.length; dKey++) {
+            // TODO map
+            dest[dKey] = readers[dKey] ? src : null;
+          }
+          return dest;
+        }
+
+        function arrayFn(src: ArrayOrObject<S>) {
+          const dest: ArrayData = [];
+          for (let dKey = 0; dKey < readers.length; dKey++) {
+            let value;
+
+            const r = readers[dKey];
+            if (r === undefined) {
+              if (all && Array.isArray(src) && !all.excluded.has(dKey)) {
+                value = src[dKey];
+              }
+            } else {
+              const { sKey, mapper } = r;
+              value = getter(src, sKey);
+              if (value !== undefined && mapper !== undefined) {
+                value = mapper(value);
+              }
+            }
+
+            if (dKey < requiredLength) {
+              dest[dKey] = value ?? null;
+            } else if (value !== undefined) {
+              dest.push(value);
             }
           }
+
+          if (all && Array.isArray(src)) {
+            //TODO
+          }
+          return dest;
         }
-      }
-      return dest;
-    };
-  }
-}
 
-class O2ACompiler extends ToArrayCompiler<string> {
-  constructor(readonly logger: CompileLogger) {
-    super('string', logger);
-  }
-
-  compile(resolver: SelectorResolver) {
-    const { resolved } = super.resolveReaders(resolver);
-
-    const fn: SelectorFn = (src: Data) => {
-      if (Array.isArray(src)) {
-        return src.map((s) => fn(s));
+        return <[typeof terminalFn, typeof arrayFn]>[terminalFn, arrayFn];
       }
 
-      const dest: ArrayData = [];
-      if (isTerminal(src)) {
-        for (let i = 0; i < resolved.length; i++) {
-          dest[i] = resolved[i] ? src : null;
-        }
-      } else {
-        for (let destIndex = 0; destIndex < resolved.length; destIndex++) {
-          const r = resolved[destIndex];
-          dest[destIndex] = r ? (r.fn ? r.fn(src[r.srcKey]) : src[r.srcKey]) ?? null : null;
-        }
-      }
-      return dest;
-    };
-
-    return fn;
-  }
-}
-
-class A2OCompiler extends CopyCompiler<number, string> {
-  constructor(readonly logger: CompileLogger) {
-    super('number', 'string', logger);
-  }
-
-  compile(resolver: SelectorResolver): SelectorFn {
-    const { resolved } = this.resolveReaders(resolver);
-
-    return function (src: Data) {
-      const dest: ObjectData = {};
-      if (isTerminal(src)) {
-        resolved.forEach((r) => (dest[r.destKey] = src));
-      } else {
-        const arrSrc = Array.isArray(src) ? src : [src];
-        for (let i = 0; i < resolved.length; i++) {
-          const { srcKey, destKey, fn } = resolved[i];
-          dest[destKey] = fn?.(arrSrc[srcKey]) ?? arrSrc[srcKey];
-        }
-      }
-      return dest;
-    };
-  }
-}
-
-class O2OCompiler extends CopyCompiler<string, string> {
-  constructor(readonly logger: CompileLogger) {
-    super('string', 'string', logger);
-  }
-
-  compile(resolver: SelectorResolver): SelectorFn {
-    const { resolved, selectAll } = this.resolveReaders(resolver);
-
-    const fn: SelectorFn = function (src: Data) {
-      if (Array.isArray(src)) {
-        return src.map((e) => fn(e));
-      }
-
-      const dest: ObjectData = {};
-      if (isTerminal(src)) {
-        resolved.forEach((r) => (dest[r.destKey] = src));
-      } else {
-        resolved.forEach((r) => {
-          dest[r.destKey] = (r.fn ? r.fn(src[r.srcKey]) : src[r.srcKey]) ?? null;
-        });
-
-        if (selectAll) {
-          Object.keys(src).forEach((k) => {
-            if (dest[k] === undefined && !selectAll.excluded.has(k)) {
-              dest[k] = selectAll.fn ? selectAll.fn(src[k]) : src[k];
-            }
+      function array() {
+        const cp = copier<number, number>(isNumber, isNumber);
+        function compile() {
+          const [terminal, array] = writer(cp.fields, (src: ArrayData, idx: number) => {
+            return idx < 0 ? src[src.length + idx] : src[idx];
           });
+          return arrayReader(terminal, array);
         }
+
+        return { copier: cp, compile: compile };
       }
 
-      return dest;
-    };
-    return fn;
+      function object() {
+        const cp = copier<string, number>(isString, isNumber);
+        function compile() {
+          const [terminal, array] = writer(cp.fields, (src: ObjectData, key: string) => src[key]);
+          return objectReader(terminal, array);
+        }
+
+        return { copier: cp, compile: compile };
+      }
+
+      return { from: { object: object, array: array } };
+    }
+
+    function object() {
+      function writer<S extends Index>(fields: FieldList<S, string>) {
+        function terminal(src: TerminalData): Data {
+          const dest: ObjectData = {};
+          fields.forEach((f) => (dest[f.dKey] = f.mapper ? f.mapper(src) : src));
+          return dest;
+        }
+
+        function object(src: ArrayOrObject<S>) {
+          const dest: ObjectData = {};
+
+          for (let i = 0; i < fields.length; i++) {
+            const { sKey, dKey, mapper } = fields[i];
+            const value = (<any>src)[sKey];
+            dest[dKey] = mapper?.(value) ?? value ?? null;
+          }
+
+          return dest;
+        }
+
+        return <[typeof terminal, typeof object]>[terminal, object];
+      }
+
+      function array() {
+        const cp = copier<number, string>(isNumber, isString);
+
+        function compile() {
+          const { fields } = toFieldList(cp.fields);
+          return arrayReader(...writer(fields));
+        }
+
+        return { copier: cp, compile: compile };
+      }
+
+      function object() {
+        const cp = copier<string, string>(isString, isString);
+
+        function compile() {
+          const { fields } = toFieldList(cp.fields);
+          return objectReader(...writer(fields));
+        }
+
+        return { copier: cp, compile: compile };
+      }
+
+      return { from: { object: object, array: array } };
+    }
+
+    return { object: object, array: array };
   }
+
+  let cpl: { copier: ReturnType<typeof copier>; compile: () => SelectorFn };
+  function add(sKey: Index, dKey: Index, mapper?: SelectorFn) {
+    if (cpl === undefined) {
+      const d = isString(dKey) ? compiler().object() : compiler().array();
+      cpl = isString(sKey) ? d.from.object() : d.from.array();
+    }
+    return cpl.copier.add(sKey, dKey, mapper);
+  }
+
+  function exclude(dKey: Index) {
+    if (cpl === undefined) {
+      cpl = isString(dKey) ? compiler().object().from.object() : compiler().array().from.array();
+    }
+    return cpl.copier.exclude(dKey);
+  }
+
+  function compile() {
+    return cpl === undefined ? (v: Data) => null : cpl.compile();
+  }
+
+  function selectAll(mapper?: SelectorFn) {
+    all = { mapper: mapper };
+  }
+
+  return { add: add, exclude: exclude, compile: compile, selectAll: selectAll };
+}
+
+function objectReader<D extends Data>(tFn: (src: TerminalData) => D, oFn: (src: ObjectData) => D): SelectorFn {
+  const fn: SelectorFn = (src: Data) => {
+    if (Array.isArray(src)) {
+      return src.map((s) => fn(s));
+    }
+
+    if (isTerminal(src)) {
+      return tFn(src);
+    }
+
+    return oFn(src);
+  };
+  return fn;
+}
+
+function arrayReader(tFn: (src: TerminalData) => Data, aFn: (src: ArrayData) => Data): SelectorFn {
+  return (src: Data) => {
+    if (isTerminal(src)) {
+      return tFn(src);
+    }
+    const aSrc = Array.isArray(src) ? src : src == null ? [] : [src];
+    return aFn(aSrc);
+  };
 }
 
 export class DefaultSelectorResolver implements SelectorResolver {
@@ -435,11 +444,13 @@ export class DefaultSelectorResolver implements SelectorResolver {
 }
 
 class CompileLogger {
-  multipleWrites(k: string | number) {
+  multipleWrites(k: unknown): false {
     console.warn('Multiple writes: ', k);
+    return false;
   }
 
-  incompatibleTypes(m: string) {
+  incompatibleTypes(m: string): false {
     console.warn(`Incompatible types, ignoring: ${m}`);
+    return false;
   }
 }

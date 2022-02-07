@@ -15,3 +15,19 @@ export interface ObjectData {
 export type ArrayData = Array<Data>;
 
 export type Data = TerminalData | ObjectData | ArrayData;
+
+export type Index = string | number;
+
+export function isIndex(v: unknown): v is Index {
+  return typeof v === 'string' || typeof v === 'number';
+}
+
+export function isString(v: unknown): v is string {
+  return typeof v === 'string';
+}
+
+export function isNumber(v: unknown): v is number {
+  return typeof v === 'number';
+}
+
+export type ArrayOrObject<T extends Index> = T extends number ? ArrayData : ObjectData;

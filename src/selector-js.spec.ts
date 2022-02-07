@@ -4,7 +4,6 @@
 
 import { Data } from './data';
 import { equals } from './data-js';
-import { Selector } from './selector';
 import { DefaultSelectorResolver } from './selector-js';
 
 declare global {
@@ -67,16 +66,7 @@ describe('Copy Selector', () => {
   it('should use negative indices to specify ordering', () => {
     const source = [5, 6, 7];
     const selector = { '-1': [0], '-2': [1] };
-    const expected = [6, 5];
-
-    const result = resolver.compile(selector)(source);
-    expect(result).toDeepEqual(expected);
-  });
-
-  it('should read negative indices from end of array', () => {
-    const source = [5, 6, 7];
-    const selector = { '-1': true, '-2': [] };
-    const expected = [6, 7];
+    const expected = [5, 6];
 
     const result = resolver.compile(selector)(source);
     expect(result).toDeepEqual(expected);
@@ -97,3 +87,42 @@ describe('Copy Selector', () => {
     expect(result).toDeepEqual(expected);
   });
 });
+
+describe('Selector chaining', () => {
+  beforeEach(function () {
+    jasmine.addMatchers(customMatchers);
+  });
+
+  it('should chain property access', () => {
+    const selector = { bestDog: [['animals'], [0], ['name']] };
+    const expected = { bestDog: 'Luna' };
+
+    const result = resolver.compile(selector)(testData);
+    // expect(result).toDeepEqual(expected);
+  });
+});
+
+const testData = {
+  animals: [
+    {
+      kind: 'dog',
+      name: 'Luna',
+      gender: 'female',
+    },
+    {
+      kind: 'cat',
+      name: 'Ola',
+      gender: 'female',
+    },
+    {
+      kind: 'dog',
+      name: 'Bobo',
+      gender: 'male',
+    },
+    {
+      kind: 'lion',
+      name: 'King',
+      gender: 'male',
+    },
+  ],
+};
