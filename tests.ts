@@ -11,21 +11,25 @@ export const TEST_DATA = {
       kind: 'dog',
       name: 'Luna',
       is: 'feisty',
+      weight: 10,
     },
     {
       kind: 'cat',
       name: 'Ola',
       is: 'playful',
+      weight: 5,
     },
     {
       kind: 'dog',
       name: 'Bobo',
       is: 'thoughtful',
+      weight: 20,
     },
     {
       kind: 'lion',
       name: 'King',
       is: 'thoughtful',
+      weight: 100,
     },
   ],
 };
@@ -78,7 +82,7 @@ export const TEST_CASES: { comment: string; selector?: Selector; result?: Data }
   },
   {
     comment:
-      'A filter can appear anywhere in a path. Unlike the previous example, **kind** is included in the output since it appears in the selector path. The predicate uses RegExp operator.',
+      'A filter can appear anywhere in a path. Unlike the previous example, **kind** is included in the output since it appears in the selector path rather than the predicate. The predicate uses RegExp operator.',
     selector: { animals: { name: true, kind: { '?': { '~': '.*at' } } } },
     result: { animals: [{ name: 'Ola', kind: 'cat' }] },
   },
@@ -92,4 +96,18 @@ export const TEST_CASES: { comment: string; selector?: Selector; result?: Data }
     selector: { animals: { name: true, '?': [{ kind: 'lion' }, { name: 'Ola' }] } },
     result: { animals: [{ name: 'Ola' }, { name: 'King' }] },
   },
+  {
+    comment: '## Grouping and Aggregation',
+  },
+  /*   {
+    comment: '',
+    selector: { animals: { kind: true, weight: 'sum' } },
+    result: {
+      animals: [
+        { kind: 'dog', weight: 30 },
+        { kind: 'cat', weight: 5 },
+        { kind: 'lion', weight: 100 },
+      ],
+    },
+  }, */
 ];

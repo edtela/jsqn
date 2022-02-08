@@ -26,9 +26,15 @@ function cloneFn(v: Data): Data {
   return JSON.parse(JSON.stringify(v));
 }
 
-export interface ResolvedFunction {
+export interface ResolvedTransform {
   fn: (...input: any) => Data;
 }
+
+export interface ResolvedAggregation {
+  fn?: (...input: any) => Data;
+}
+
+export type ResolvedFunction = ResolvedTransform | ResolvedAggregation;
 
 export interface SelectorResolver {
   resolveFunction(name: string): ResolvedFunction;
@@ -39,6 +45,7 @@ export interface SelectorResolver {
 export interface CompileResult {
   select: Index | boolean;
   fn?: SelectorFn;
+  group?: boolean;
 }
 
 function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
@@ -51,11 +58,11 @@ function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
   }
 
   if (typeof s === 'number') {
-    throw Error('TODO: grouping');
+    throw Error('TODO: sorting');
   }
 
   if (typeof s === 'string') {
-    throw Error('TODO: grouping');
+    return { select: true, fn: r.resolveFunction(s).fn, group: true };
   }
 
   if (Array.isArray(s)) {
@@ -195,6 +202,11 @@ function compileFieldSelector(s: FieldSelector, r: SelectorResolver): CompileRes
       return;
     }
 
+    if (cr.group) {
+      compiler.group(dKey, cr.fn);
+      return;
+    }
+
     const sKey: Index = cr.select === true ? dKey : cr.select;
     compiler.add(sKey, dKey, cr.fn);
   });
@@ -202,13 +214,36 @@ function compileFieldSelector(s: FieldSelector, r: SelectorResolver): CompileRes
   return { select: true, fn: compiler.compile() };
 }
 
+type FieldList<S, D> = { sKey: S; dKey: D; mapper?: SelectorFn }[];
+interface FieldQuery<S, D> {
+  fields: FieldList<S, D>;
+  selectAll?: { except: Set<D>; mapper?: SelectorFn };
+  filter?: PredicateFn;
+  grouped: boolean;
+}
+
 function fieldCompiler(logger = new CompileLogger()) {
   let all: { mapper?: SelectorFn };
   let predicate: PredicateFn;
+  let grouped = false;
 
   type FieldMap<S, D> = Map<D, [S, SelectorFn?] | null>;
-  function copier<S, D>(isS: (s: unknown) => s is S, isD: (s: unknown) => s is D) {
+  function builder<S, D>(isS: (s: unknown) => s is S, isD: (s: unknown) => s is D) {
     const fields: FieldMap<S, D> = new Map();
+
+    function toQuery() {
+      const query: FieldQuery<S, D> = { fields: [], filter: predicate, grouped: grouped };
+      query.selectAll = all ? { mapper: all.mapper, except: new Set<D>() } : undefined;
+      for (let [dKey, s] of fields) {
+        if (s === null) {
+          if (query.selectAll) query.selectAll.except.add(dKey);
+        } else {
+          const [sKey, mapper] = s;
+          query.fields.push({ dKey: dKey, sKey: sKey, mapper: mapper });
+        }
+      }
+      return query;
+    }
 
     function set(dKey: D, value: [S, SelectorFn?] | null) {
       if (fields.has(dKey)) {
@@ -235,168 +270,57 @@ function fieldCompiler(logger = new CompileLogger()) {
       return false;
     }
 
-    return { add: add, exclude: exclude, fields: fields };
+    return { add: add, exclude: exclude, toQuery: toQuery };
   }
 
   function compiler() {
-    type FieldList<S, D> = { sKey: S; dKey: D; mapper?: SelectorFn }[];
-    function toFieldList<S, D>(map: FieldMap<S, D>) {
-      const fields: FieldList<S, D> = [];
-      const selectAll = all ? { allMapper: all.mapper, excluded: new Set<D>() } : undefined;
-      for (let [dKey, s] of map) {
-        if (s === null) {
-          if (selectAll) selectAll.excluded.add(dKey);
-        } else {
-          const [sKey, mapper] = s;
-          fields.push({ dKey: dKey, sKey: sKey, mapper: mapper });
-        }
-      }
-      return { fields: fields, all: selectAll };
-    }
-
     function array() {
-      function writer<S extends Index>(cp: FieldMap<S, number>, getter: (src: ArrayOrObject<S>, s: S) => Data) {
-        const { fields, all } = toFieldList(cp);
-
-        const readers: (undefined | { sKey: S; mapper?: SelectorFn })[] = [];
-        fields.filter((v) => v.dKey >= 0).forEach((p) => (readers[p.dKey] = p));
-        const requiredLength = readers.length;
-
-        const negative = fields.filter((v) => v.dKey < 0).sort((a, b) => b.dKey - a.dKey);
-        for (let i = 0, j = 0; i < negative.length; i++) {
-          while (readers[j] !== undefined) j++;
-          readers[j] = negative[i];
-        }
-
-        function terminalFn(src: TerminalData) {
-          const dest: ArrayData = [];
-          for (let dKey = 0; dKey < readers.length; dKey++) {
-            // TODO map
-            dest[dKey] = readers[dKey] ? src : null;
-          }
-          return dest;
-        }
-
-        function arrayFn(src: ArrayOrObject<S>) {
-          const dest: ArrayData = [];
-          for (let dKey = 0; dKey < readers.length; dKey++) {
-            let value;
-
-            const r = readers[dKey];
-            if (r === undefined) {
-              if (all && Array.isArray(src) && !all.excluded.has(dKey)) {
-                value = src[dKey];
-              }
-            } else {
-              const { sKey, mapper } = r;
-              value = getter(src, sKey);
-              if (value !== undefined && mapper !== undefined) {
-                value = mapper(value);
-              }
-            }
-
-            if (dKey < requiredLength) {
-              dest[dKey] = value ?? null;
-            } else if (value !== undefined) {
-              dest.push(value);
-            }
-          }
-
-          if (all && Array.isArray(src)) {
-            //TODO
-          }
-          return dest;
-        }
-
-        return <[typeof terminalFn, typeof arrayFn]>[terminalFn, arrayFn];
-      }
-
       function array() {
-        const cp = copier<number, number>(isNumber, isNumber);
+        const qb = builder<number, number>(isNumber, isNumber);
+
         function compile() {
-          const [terminal, array] = writer(cp.fields, (src: ArrayData, idx: number) => {
-            return idx < 0 ? src[src.length + idx] : src[idx];
-          });
-          return arrayReader(terminal, array, predicate);
+          const query = qb.toQuery();
+          return arrayReader(query, ...arrayWriter(query, arrayGet));
         }
 
-        return { copier: cp, compile: compile };
+        return { builder: qb, compile: compile };
       }
 
       function object() {
-        const cp = copier<string, number>(isString, isNumber);
+        const qb = builder<string, number>(isString, isNumber);
+
         function compile() {
-          const [terminal, array] = writer(cp.fields, (src: ObjectData, key: string) => src[key]);
-          return objectReader(terminal, array);
+          const query = qb.toQuery();
+          return objectReader(query, ...arrayWriter(query, objectGet));
         }
 
-        return { copier: cp, compile: compile };
+        return { builder: qb, compile: compile };
       }
 
       return { from: { object: object, array: array } };
     }
 
     function object() {
-      function writer<S extends Index>(fields: FieldList<S, string>) {
-        function terminal(src: TerminalData): Data | undefined {
-          if (predicate && !predicate(src)) {
-            return undefined;
-          }
-          if (fields.length === 0) {
-            return src;
-          }
-
-          const dest: ObjectData = {};
-          fields.forEach((f) => (dest[f.dKey] = f.mapper ? f.mapper(src) ?? null : src));
-          return dest;
-        }
-
-        function object(src: ArrayOrObject<S>) {
-          if (predicate && !predicate(src)) {
-            return undefined;
-          }
-
-          const dest: ObjectData = {};
-          for (let i = 0; i < fields.length; i++) {
-            const { sKey, dKey, mapper } = fields[i];
-            let value = (<any>src)[sKey];
-            if (mapper != null) {
-              value = mapper(value);
-            }
-
-            if (value === undefined) {
-              return undefined;
-            }
-
-            dest[dKey] = value;
-          }
-
-          return dest;
-        }
-
-        return <[typeof terminal, typeof object]>[terminal, object];
-      }
-
       function array() {
-        const cp = copier<number, string>(isNumber, isString);
+        const qb = builder<number, string>(isNumber, isString);
 
         function compile() {
-          const { fields } = toFieldList(cp.fields);
-          return arrayReader(...writer(fields), predicate);
+          const query = qb.toQuery();
+          return arrayReader(query, ...objectWriter(query));
         }
 
-        return { copier: cp, compile: compile };
+        return { builder: qb, compile: compile };
       }
 
       function object() {
-        const cp = copier<string, string>(isString, isString);
+        const qb = builder<string, string>(isString, isString);
 
         function compile() {
-          const { fields } = toFieldList(cp.fields);
-          return objectReader(...writer(fields), predicate);
+          const query = qb.toQuery();
+          return objectReader(query, ...objectWriter(query));
         }
 
-        return { copier: cp, compile: compile };
+        return { builder: qb, compile: compile };
       }
 
       return { from: { object: object, array: array } };
@@ -405,20 +329,25 @@ function fieldCompiler(logger = new CompileLogger()) {
     return { object: object, array: array };
   }
 
-  let cpl: { copier: ReturnType<typeof copier>; compile: () => SelectorFn };
+  let cpl: { builder: ReturnType<typeof builder>; compile: () => SelectorFn };
   function add(sKey: Index, dKey: Index, mapper?: SelectorFn) {
     if (cpl === undefined) {
       const d = isString(dKey) ? compiler().object() : compiler().array();
       cpl = isString(sKey) ? d.from.object() : d.from.array();
     }
-    return cpl.copier.add(sKey, dKey, mapper);
+    return cpl.builder.add(sKey, dKey, mapper);
+  }
+
+  function group(dKey: Index, mapper?: SelectorFn) {
+    grouped = true;
+    return add(dKey, dKey, mapper);
   }
 
   function exclude(dKey: Index) {
     if (cpl === undefined) {
       cpl = isString(dKey) ? compiler().object().from.object() : compiler().array().from.array();
     }
-    return cpl.copier.exclude(dKey);
+    return cpl.builder.exclude(dKey);
   }
 
   function compile() {
@@ -436,13 +365,111 @@ function fieldCompiler(logger = new CompileLogger()) {
     predicate = p;
   }
 
-  return { add: add, exclude: exclude, compile: compile, selectAll: selectAll, filter: filter };
+  return { add: add, exclude: exclude, compile: compile, selectAll: selectAll, filter: filter, group: group };
 }
 
-function objectReader<D extends Data>(
-  tFn: (src: TerminalData) => D | undefined,
-  oFn: (src: ObjectData) => D | undefined,
-  predicate?: PredicateFn
+function objectGet(src: ObjectData, key: string) {
+  return src[key];
+}
+
+function arrayGet(src: ArrayData, idx: number) {
+  return idx < 0 ? src[src.length + idx] : src[idx];
+}
+
+function objectWriter<S extends Index>(query: FieldQuery<S, string>) {
+  const { fields } = query;
+  function terminal(src: TerminalData): Data {
+    if (fields.length === 0) {
+      return src;
+    }
+
+    const dest: ObjectData = {};
+    fields.forEach((f) => (dest[f.dKey] = f.mapper ? f.mapper(src) ?? null : src));
+    return dest;
+  }
+
+  function object(src: ArrayOrObject<S>) {
+    const dest: ObjectData = {};
+    for (let i = 0; i < fields.length; i++) {
+      const { sKey, dKey, mapper } = fields[i];
+      let value = (<any>src)[sKey];
+      if (mapper != null) {
+        value = mapper(value);
+      }
+
+      if (value === undefined) {
+        return undefined;
+      }
+
+      dest[dKey] = value;
+    }
+
+    return dest;
+  }
+
+  return <[typeof terminal, typeof object]>[terminal, object];
+}
+
+function arrayWriter<S extends Index>(query: FieldQuery<S, number>, getter: (src: ArrayOrObject<S>, s: S) => Data) {
+  const { fields, selectAll } = query;
+
+  const readers: (undefined | { sKey: S; mapper?: SelectorFn })[] = [];
+  fields.filter((v) => v.dKey >= 0).forEach((p) => (readers[p.dKey] = p));
+  const requiredLength = readers.length;
+
+  const negative = fields.filter((v) => v.dKey < 0).sort((a, b) => b.dKey - a.dKey);
+  for (let i = 0, j = 0; i < negative.length; i++) {
+    while (readers[j] !== undefined) j++;
+    readers[j] = negative[i];
+  }
+
+  function terminalFn(src: TerminalData) {
+    const dest: ArrayData = [];
+    for (let dKey = 0; dKey < readers.length; dKey++) {
+      // TODO map
+      dest[dKey] = readers[dKey] ? src : null;
+    }
+    return dest;
+  }
+
+  function arrayFn(src: ArrayOrObject<S>) {
+    const dest: ArrayData = [];
+    for (let dKey = 0; dKey < readers.length; dKey++) {
+      let value;
+
+      const r = readers[dKey];
+      if (r === undefined) {
+        if (selectAll && Array.isArray(src) && !selectAll.except.has(dKey)) {
+          value = src[dKey];
+        }
+      } else {
+        const { sKey, mapper } = r;
+        value = getter(src, sKey);
+        if (value !== undefined && mapper !== undefined) {
+          value = mapper(value);
+        }
+      }
+
+      if (dKey < requiredLength) {
+        dest[dKey] = value ?? null;
+      } else if (value !== undefined) {
+        dest.push(value);
+      }
+    }
+
+    if (selectAll && Array.isArray(src)) {
+      //TODO
+    }
+    return dest;
+  }
+
+  return <[typeof terminalFn, typeof arrayFn]>[terminalFn, arrayFn];
+}
+
+function objectReader<D extends Index>(
+  query: FieldQuery<string, D>,
+  tFn: (src: TerminalData) => Data | undefined,
+  oFn: (src: ObjectData) => Data | undefined
 ): SelectorFn {
   const fn: SelectorFn = (src: Data) => {
     if (Array.isArray(src)) {
@@ -453,15 +480,16 @@ function objectReader<D extends Data>(
           aDest.push(v);
         }
       });
+
       return aDest;
+    }
+
+    if (query.filter && !query.filter(src)) {
+      return undefined;
     }
 
     if (isTerminal(src)) {
       return tFn(src);
-    }
-
-    if (predicate && !predicate(src)) {
-      return undefined;
     }
 
     return oFn(src);
@@ -469,18 +497,20 @@ function objectReader<D extends Data>(
   return fn;
 }
 
-function arrayReader(
+function arrayReader<D extends Index>(
+  query: FieldQuery<number, D>,
   tFn: (src: TerminalData) => Data | undefined,
-  aFn: (src: ArrayData) => Data | undefined,
-  predicate?: PredicateFn
+  aFn: (src: ArrayData) => Data | undefined
 ): SelectorFn {
+  const predicate = query.filter;
+
   return (src: Data) => {
     if (isTerminal(src)) {
       return tFn(src);
     }
     let aSrc = Array.isArray(src) ? src : src == null ? [] : [src];
-    if (predicate) {
-      aSrc = aSrc.filter((e) => predicate(e));
+    if (predicate && !predicate(src)) {
+      return undefined;
     }
     return aFn(aSrc);
   };
@@ -491,6 +521,10 @@ export class DefaultSelectorResolver implements SelectorResolver {
 
   resolveFunction(name: string): ResolvedFunction {
     //TODO
+    if (name === 'group') {
+      return {};
+    }
+
     if (name === 'abs') {
       return { fn: Math.abs };
     }
