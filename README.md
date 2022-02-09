@@ -7,22 +7,26 @@ Example Data:
   {
    "kind": "dog",
    "name": "Luna",
-   "is": "feisty"
+   "is": "feisty",
+   "weight": 10
   },
   {
    "kind": "cat",
    "name": "Ola",
-   "is": "playful"
+   "is": "playful",
+   "weight": 5
   },
   {
    "kind": "dog",
    "name": "Bobo",
-   "is": "thoughtful"
+   "is": "thoughtful",
+   "weight": 20
   },
   {
    "kind": "lion",
    "name": "King",
-   "is": "thoughtful"
+   "is": "thoughtful",
+   "weight": 100
   }
  ]
 }
@@ -59,12 +63,12 @@ Selector: { "First Dog is": [ [ "animals" ], [ 0 ], "uppercase", [ "name" ] ] }
 Output: { "First Dog is": "LUNA" }
 ```
 ## Filtering
-A filter can be added using the **?** operator as key and a predicate as value. A primitive value implies equality
+Filtering is specified using the **?** operator as key and a predicate as value. A primitive value implies equality
 ```
 Selector: { "animals": { "name": true, "?": { "kind": "cat" } } }
 Output: { "animals": [ { "name": "Ola" } ] }
 ```
-A filter can appear anywhere in a path. Unlike the previous example, **kind** is included in the output since it appears in the selector path. The predicate uses RegExp operator.
+A filter can appear anywhere in a path. Unlike the previous example, **kind** is included in the output since it appears in the selector path rather than the predicate. The predicate uses RegExp operator.
 ```
 Selector: { "animals": { "name": true, "kind": { "?": { "~": ".*at" } } } }
 Output: { "animals": [ { "name": "Ola", "kind": "cat" } ] }
@@ -78,4 +82,15 @@ Conditions can be OR-ed using **[]**
 ```
 Selector: { "animals": { "name": true, "?": [ { "kind": "lion" }, { "name": "Ola" } ] } }
 Output: { "animals": [ { "name": "Ola" }, { "name": "King" } ] }
+```
+## Aggregation
+Aggregation is specified by providing an aggregation function in one of the properties. Properties that have no aggregation function are grouped
+```
+Selector: { "animals": { "kind": true, "weight": "sum", "?": { "kind": { "!": "lion" } } } }
+Output: { "animals": [ { "kind": "dog", "weight": 30 }, { "kind": "cat", "weight": 5 } ] }
+```
+Data can be transformed prior to aggregation by specifying transforms after the aggregation function
+```
+Selector: { "animals": { "names": [ "values", "uppercase", [ "name" ] ], "kind": { "?": { "!": "lion" } } } }
+Output: { "animals": [ { "kind": "dog", "names": [ "LUNA", "BOBO" ] }, { "kind": "cat", "names": [ "OLA" ] } ] }
 ```

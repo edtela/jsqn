@@ -76,7 +76,7 @@ export const TEST_CASES: { comment: string; selector?: Selector; result?: Data }
   },
   {
     comment:
-      'A filter can be added using the **?** operator as key and a predicate as value. A primitive value implies equality',
+      'Filtering is specified using the **?** operator as key and a predicate as value. A primitive value implies equality',
     selector: { animals: { name: true, '?': { kind: 'cat' } } },
     result: { animals: [{ name: 'Ola' }] },
   },
@@ -97,17 +97,32 @@ export const TEST_CASES: { comment: string; selector?: Selector; result?: Data }
     result: { animals: [{ name: 'Ola' }, { name: 'King' }] },
   },
   {
-    comment: '## Grouping and Aggregation',
+    comment: '## Aggregation',
   },
-  /*   {
-    comment: '',
-    selector: { animals: { kind: true, weight: 'sum' } },
+  {
+    comment:
+      'Aggregation is specified by providing an aggregation function in one of the properties. Properties that have no aggregation function are grouped',
+    selector: { animals: { kind: true, weight: 'sum', '?': { kind: { '!': 'lion' } } } },
     result: {
       animals: [
         { kind: 'dog', weight: 30 },
         { kind: 'cat', weight: 5 },
-        { kind: 'lion', weight: 100 },
       ],
     },
-  }, */
+  },
+  {
+    comment: 'Data can be transformed prior to aggregation by specifying transforms after the aggregation function',
+    selector: {
+      animals: {
+        names: ['values', 'uppercase', ['name']],
+        kind: { '?': { '!': 'lion' } },
+      },
+    },
+    result: {
+      animals: [
+        { kind: 'dog', names: ['LUNA', 'BOBO'] },
+        { kind: 'cat', names: ['OLA'] },
+      ],
+    },
+  },
 ];

@@ -31,21 +31,22 @@ export interface ResolvedTransform {
 }
 
 export interface ResolvedAggregation {
-  fn?: (...input: any) => Data;
+  fn?: Accumulator;
 }
 
-export type ResolvedFunction = ResolvedTransform | ResolvedAggregation;
+export type Accumulator = () => {
+  add: (v: Data) => void;
+  get: () => Data;
+};
 
-export interface SelectorResolver {
-  resolveFunction(name: string): ResolvedFunction;
-  resolveKey(key: string): string | number;
-  compilePredicate(p: Predicate): PredicateFn;
-}
+export type ResolvedFunction = ResolvedTransform;
+
+export type SelectorResolver = DefaultSelectorResolver;
 
 export interface CompileResult {
   select: Index | boolean;
   fn?: SelectorFn;
-  group?: boolean;
+  group?: Accumulator | true;
 }
 
 function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
@@ -62,7 +63,7 @@ function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
   }
 
   if (typeof s === 'string') {
-    return { select: true, fn: r.resolveFunction(s).fn, group: true };
+    return { select: true, group: r.resolveAggregator(s) };
   }
 
   if (Array.isArray(s)) {
@@ -98,11 +99,18 @@ function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): Compil
   }
 
   const rest = s.slice(1);
+  const second = rest.length === 1 ? rest[0] : rest;
   if (typeof first === 'string') {
+    const fn = r.resolveFunction(first);
+    if (fn == null) {
+      const cr = compileSelector(second, r);
+      cr.group = r.resolveAggregator(first);
+      return cr;
+    }
+
     return compileFunction(first, rest, r);
   }
 
-  const second = rest.length === 1 ? rest[0] : rest;
   const cr1 = compileSelector(first, r);
   const cr2 = compileFieldSelector({ '0': second }, r);
 
@@ -115,6 +123,11 @@ function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): Compil
 }
 
 function compileFunction(fnName: string, fnArgs: ArrayData, resolver: SelectorResolver): CompileResult {
+  const fn = resolver.resolveFunction(fnName)?.fn;
+  if (fn == null) {
+    throw Error('Unknown function: ' + fnName);
+  }
+
   const parsedArgs: ({ type: 'select'; value: Index | boolean } | { type: 'const'; value: any })[] = fnArgs.map((t) => {
     if (Array.isArray(t)) {
       if (t.length === 0) {
@@ -137,11 +150,6 @@ function compileFunction(fnName: string, fnArgs: ArrayData, resolver: SelectorRe
 
     return { type: 'const', value: t };
   });
-
-  const fn = resolver.resolveFunction(fnName)?.fn;
-  if (fn == null) {
-    throw Error('Unknown function: ' + fnName);
-  }
 
   if (parsedArgs.length === 0) {
     // special case: go straight to function
@@ -202,13 +210,8 @@ function compileFieldSelector(s: FieldSelector, r: SelectorResolver): CompileRes
       return;
     }
 
-    if (cr.group) {
-      compiler.group(dKey, cr.fn);
-      return;
-    }
-
     const sKey: Index = cr.select === true ? dKey : cr.select;
-    compiler.add(sKey, dKey, cr.fn);
+    compiler.add(sKey, dKey, cr.fn, cr.group);
   });
 
   return { select: true, fn: compiler.compile() };
@@ -218,8 +221,8 @@ type FieldList<S, D> = { sKey: S; dKey: D; mapper?: SelectorFn }[];
 interface FieldQuery<S, D> {
   fields: FieldList<S, D>;
   selectAll?: { except: Set<D>; mapper?: SelectorFn };
+  groups?: { groupBy: S[]; aggregate: { key: S; fn: Accumulator }[] };
   filter?: PredicateFn;
-  grouped: boolean;
 }
 
 function fieldCompiler(logger = new CompileLogger()) {
@@ -227,25 +230,34 @@ function fieldCompiler(logger = new CompileLogger()) {
   let predicate: PredicateFn;
   let grouped = false;
 
-  type FieldMap<S, D> = Map<D, [S, SelectorFn?] | null>;
+  type FieldMap<S, D> = Map<D, [S, SelectorFn?, Accumulator?] | null>;
   function builder<S, D>(isS: (s: unknown) => s is S, isD: (s: unknown) => s is D) {
     const fields: FieldMap<S, D> = new Map();
 
-    function toQuery() {
-      const query: FieldQuery<S, D> = { fields: [], filter: predicate, grouped: grouped };
+    function build() {
+      const query: FieldQuery<S, D> = { fields: [], filter: predicate };
       query.selectAll = all ? { mapper: all.mapper, except: new Set<D>() } : undefined;
+      query.groups = grouped ? { groupBy: [], aggregate: [] } : undefined;
       for (let [dKey, s] of fields) {
         if (s === null) {
           if (query.selectAll) query.selectAll.except.add(dKey);
         } else {
-          const [sKey, mapper] = s;
+          const [sKey, mapper, aggregator] = s;
+          if (query.groups) {
+            if (aggregator) {
+              query.groups.aggregate.push({ key: <any>dKey, fn: aggregator });
+            } else {
+              query.groups.groupBy.push(<any>dKey);
+            }
+          }
           query.fields.push({ dKey: dKey, sKey: sKey, mapper: mapper });
         }
       }
+
       return query;
     }
 
-    function set(dKey: D, value: [S, SelectorFn?] | null) {
+    function set(dKey: D, value: [S, SelectorFn?, Accumulator?] | null) {
       if (fields.has(dKey)) {
         return logger.multipleWrites(dKey);
       }
@@ -254,9 +266,9 @@ function fieldCompiler(logger = new CompileLogger()) {
       return true;
     }
 
-    function add(sKey: Index, dKey: Index, mapper?: SelectorFn) {
+    function add(sKey: Index, dKey: Index, mapper?: SelectorFn, accumulator?: Accumulator) {
       if (isS(sKey) && isD(dKey)) {
-        return set(dKey, [sKey, mapper]);
+        return set(dKey, [sKey, mapper, accumulator]);
       }
       return logger.incompatibleTypes(`${sKey}->${dKey}`);
     }
@@ -270,7 +282,7 @@ function fieldCompiler(logger = new CompileLogger()) {
       return false;
     }
 
-    return { add: add, exclude: exclude, toQuery: toQuery };
+    return { add: add, exclude: exclude, toQuery: build };
   }
 
   function compiler() {
@@ -330,17 +342,15 @@ function fieldCompiler(logger = new CompileLogger()) {
   }
 
   let cpl: { builder: ReturnType<typeof builder>; compile: () => SelectorFn };
-  function add(sKey: Index, dKey: Index, mapper?: SelectorFn) {
+  function add(sKey: Index, dKey: Index, mapper?: SelectorFn, group?: Accumulator | true) {
     if (cpl === undefined) {
       const d = isString(dKey) ? compiler().object() : compiler().array();
       cpl = isString(sKey) ? d.from.object() : d.from.array();
     }
-    return cpl.builder.add(sKey, dKey, mapper);
-  }
 
-  function group(dKey: Index, mapper?: SelectorFn) {
-    grouped = true;
-    return add(dKey, dKey, mapper);
+    if (group) grouped = true;
+    const groupFn = group === true ? undefined : group;
+    return cpl.builder.add(sKey, dKey, mapper, groupFn);
   }
 
   function exclude(dKey: Index) {
@@ -365,7 +375,7 @@ function fieldCompiler(logger = new CompileLogger()) {
     predicate = p;
   }
 
-  return { add: add, exclude: exclude, compile: compile, selectAll: selectAll, filter: filter, group: group };
+  return { add: add, exclude: exclude, compile: compile, selectAll: selectAll, filter: filter };
 }
 
 function objectGet(src: ObjectData, key: string) {
@@ -466,14 +476,47 @@ function arrayWriter<S extends Index>(query: FieldQuery<S, number>, getter: (src
   return <[typeof terminalFn, typeof arrayFn]>[terminalFn, arrayFn];
 }
 
-function objectReader<D extends Index>(
-  query: FieldQuery<string, D>,
+function groupObjects(groupBy: string[], aggregate: { key: string; fn: Accumulator }[], data: ArrayData) {
+  const map = new Map<string, { values: ObjectData; aggs: ReturnType<Accumulator>[] }>();
+
+  data.forEach((d) => {
+    if (d == null || Array.isArray(d) || isTerminal(d)) {
+      throw Error('NYI');
+    }
+
+    const groupValues = groupBy.map((g) => d[g]);
+    const groupId = groupValues.toString();
+    let groupData = map.get(groupId);
+    if (groupData === undefined) {
+      const values = groupBy.reduce((p, c, i) => {
+        p[c] = groupValues[i];
+        return p;
+      }, <ObjectData>{});
+
+      groupData = { values: values, aggs: aggregate.map(({ fn }) => fn()) };
+      map.set(groupId, groupData);
+    }
+    const aggs = groupData.aggs;
+    aggregate.forEach(({ key }, i) => aggs[i].add(d[key]));
+  });
+
+  map.forEach(({ values, aggs }) => aggregate.forEach(({ key }, i) => (values[key] = aggs[i].get())));
+
+  const result: ObjectData[] = [];
+  map.forEach(({ values }) => result.push(values));
+  return result;
+}
+
+function objectReader(
+  query: FieldQuery<string, unknown>,
   tFn: (src: TerminalData) => Data | undefined,
   oFn: (src: ObjectData) => Data | undefined
 ): SelectorFn {
+  const { filter, groups } = query;
   const fn: SelectorFn = (src: Data) => {
     if (Array.isArray(src)) {
       const aDest: Data[] = [];
+
       src.forEach((s) => {
         const v = fn(s);
         if (v !== undefined) {
@@ -481,10 +524,15 @@ function objectReader<D extends Index>(
         }
       });
 
+      // TODO multi-level arrays
+      if (groups) {
+        return groupObjects(groups.groupBy, groups.aggregate, aDest);
+      }
+
       return aDest;
     }
 
-    if (query.filter && !query.filter(src)) {
+    if (filter && !filter(src)) {
       return undefined;
     }
 
@@ -516,15 +564,34 @@ function arrayReader<D extends Index>(
   };
 }
 
-export class DefaultSelectorResolver implements SelectorResolver {
+export class DefaultSelectorResolver {
   predicateResolver = new DefaultPredicateResolver();
 
-  resolveFunction(name: string): ResolvedFunction {
-    //TODO
-    if (name === 'group') {
-      return {};
+  resolveAggregator(name: string): Accumulator | true {
+    if (name === 'sum') {
+      return () => {
+        let v = 0;
+        return { add: (a: any) => (v += a), get: () => v };
+      };
     }
 
+    if (name === 'values') {
+      return () => {
+        let v: ArrayData = [];
+        return { add: (a: Data) => v.push(a), get: () => v };
+      };
+    }
+
+    if (name === 'group') {
+      return true;
+    }
+
+    //TODO
+    throw new Error('Method not implemented.');
+  }
+
+  resolveFunction(name: string): ResolvedFunction | null {
+    //TODO
     if (name === 'abs') {
       return { fn: Math.abs };
     }
@@ -532,7 +599,7 @@ export class DefaultSelectorResolver implements SelectorResolver {
       return { fn: (v: string) => v.toUpperCase() };
     }
 
-    throw new Error('Method not implemented.');
+    return null;
   }
 
   resolveKey(key: string): string | number {
