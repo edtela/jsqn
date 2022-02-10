@@ -71,14 +71,6 @@ describe('ALL', () => {
     jasmine.addMatchers(customMatchers);
   });
 
-  it('chaining', () => {
-    const selector = { animals: { name: true, kind: { '?': 'cat' } } };
-    const expected = { animals: [{ name: 'Ola', kind: 'cat' }] };
-
-    const result = resolver.compile(selector)(TEST_DATA);
-    expect(result).toDeepEqual(expected);
-  });
-
   it('ALL', () => {
     TEST_CASES.forEach((c) => {
       if (c.selector) {
