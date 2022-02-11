@@ -20,6 +20,8 @@ import { ComplexSelector, FieldSelector, isTerminal, Selector } from './selector
 
 export const ALL_OP = '*';
 
+const FILTERED = Symbol();
+
 export type SelectorFn = (v: unknown) => unknown;
 
 export interface ResolvedTransform {
@@ -361,18 +363,9 @@ function fieldCompiler(logger = new CompileLogger()) {
 
     return function (src: unknown) {
       if (predicate && !predicate(src)) {
-        return undefined;
+        return FILTERED;
       }
-
-      if (isPrimitive(src)) {
-        return src;
-      }
-
-      if (Array.isArray(src)) {
-        return [];
-      }
-
-      return {};
+      return isPrimitive(src) ? src : Array.isArray(src) ? [] : {};
     };
   }
 
@@ -400,8 +393,8 @@ function objectWriter<S extends Index>(query: FieldQuery<S, string>) {
       let value = getter(sKey) ?? null;
       if (mapper != null) {
         const mapped = mapper(value);
-        if (mapped === undefined) {
-          return undefined;
+        if (mapped === FILTERED) {
+          return FILTERED;
         }
         value = mapped;
       }
@@ -519,7 +512,7 @@ function objectReader<D>(query: FieldQuery<string, D>, wb: WriterBuilder<string,
 
       src.forEach((s) => {
         const v = fn(s);
-        if (v !== undefined) {
+        if (v !== FILTERED) {
           aDest.push(v);
         }
       });
@@ -537,7 +530,7 @@ function objectReader<D>(query: FieldQuery<string, D>, wb: WriterBuilder<string,
     }
 
     if (filter && !filter(src)) {
-      return undefined;
+      return FILTERED;
     }
 
     if (isKeyValue(src)) {
