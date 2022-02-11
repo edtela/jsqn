@@ -47,6 +47,7 @@ export interface CompileResult {
   select: Index | boolean;
   fn?: SelectorFn;
   group?: Accumulator | true;
+  sort?: number;
 }
 
 function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
@@ -59,7 +60,7 @@ function compileSelector(s: Selector, r: SelectorResolver): CompileResult {
   }
 
   if (typeof s === 'number') {
-    throw Error('TODO: sorting');
+    return { select: true, sort: s };
   }
 
   if (typeof s === 'string') {
@@ -109,6 +110,12 @@ function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): Compil
     }
 
     return compileFunction(first, rest, r);
+  }
+
+  if (typeof first === 'number') {
+    const cr = compileSelector(second, r);
+    cr.sort = first;
+    return cr;
   }
 
   const cr1 = compileSelector(first, r);
@@ -211,7 +218,7 @@ function compileFieldSelector(s: FieldSelector, r: SelectorResolver): CompileRes
     }
 
     const sKey: Index = cr.select === true ? dKey : cr.select;
-    compiler.add(sKey, dKey, cr.fn, cr.group);
+    compiler.add(sKey, dKey, cr.fn, cr.group, cr.sort);
   });
 
   return { select: true, fn: compiler.compile() };
@@ -223,6 +230,7 @@ interface FieldQuery<S, D> {
   selectAll?: { except: Set<any>; mapper?: SelectorFn };
   groups?: { groupBy: S[]; aggregate: { key: S; fn: Accumulator }[] };
   filter?: PredicateFn;
+  sortBy?: { key: S; order: 1 | -1 }[];
 }
 
 function fieldCompiler(logger = new CompileLogger()) {
@@ -230,7 +238,7 @@ function fieldCompiler(logger = new CompileLogger()) {
   let predicate: PredicateFn;
   let grouped = false;
 
-  type FieldMap<S, D> = Map<D, [S, SelectorFn?, Accumulator?] | null>;
+  type FieldMap<S, D> = Map<D, [S, SelectorFn?, Accumulator?, number?] | null>;
   function builder<S, D>(isS: (s: unknown) => s is S, isD: (s: unknown) => s is D) {
     const fields: FieldMap<S, D> = new Map();
 
@@ -238,11 +246,12 @@ function fieldCompiler(logger = new CompileLogger()) {
       const query: FieldQuery<S, D> = { fields: [], filter: predicate };
       query.selectAll = all ? { mapper: all.mapper, except: new Set<any>() } : undefined;
       query.groups = grouped ? { groupBy: [], aggregate: [] } : undefined;
+      let sortBy: { key: S; order: number }[] = [];
       for (let [dKey, s] of fields) {
         if (s === null) {
           if (query.selectAll) query.selectAll.except.add(dKey);
         } else {
-          const [sKey, mapper, aggregator] = s;
+          const [sKey, mapper, aggregator, sort] = s;
           if (query.groups) {
             if (aggregator) {
               query.groups.aggregate.push({ key: <any>dKey, fn: aggregator });
@@ -250,14 +259,26 @@ function fieldCompiler(logger = new CompileLogger()) {
               query.groups.groupBy.push(<any>dKey);
             }
           }
+          if (sort) {
+            sortBy.push({ key: sKey, order: sort });
+          }
           query.fields.push({ dKey: dKey, sKey: sKey, mapper: mapper });
         }
+      }
+
+      sortBy = sortBy
+        .filter(({ order }) => order != 0)
+        .sort((a, b) => Math.abs(a.order) - Math.abs(b.order))
+        .map(({ key, order }) => ({ key: key, order: order / Math.abs(order) }));
+
+      if (sortBy.length > 0) {
+        query.sortBy = <{ key: S; order: 1 | -1 }[]>sortBy;
       }
 
       return query;
     }
 
-    function set(dKey: D, value: [S, SelectorFn?, Accumulator?] | null) {
+    function set(dKey: D, value: [S, SelectorFn?, Accumulator?, number?] | null) {
       if (fields.has(dKey)) {
         return logger.multipleWrites(dKey);
       }
@@ -266,9 +287,9 @@ function fieldCompiler(logger = new CompileLogger()) {
       return true;
     }
 
-    function add(sKey: Index, dKey: Index, mapper?: SelectorFn, accumulator?: Accumulator) {
+    function add(sKey: Index, dKey: Index, mapper?: SelectorFn, accumulator?: Accumulator, sort?: number) {
       if (isS(sKey) && isD(dKey)) {
-        return set(dKey, [sKey, mapper, accumulator]);
+        return set(dKey, [sKey, mapper, accumulator, sort]);
       }
       return logger.incompatibleTypes(`${sKey}->${dKey}`);
     }
@@ -318,7 +339,7 @@ function fieldCompiler(logger = new CompileLogger()) {
   }
 
   let cpl: { builder: ReturnType<typeof builder>; compile: () => SelectorFn };
-  function add(sKey: Index, dKey: Index, mapper?: SelectorFn, group?: Accumulator | true) {
+  function add(sKey: Index, dKey: Index, mapper?: SelectorFn, group?: Accumulator | true, sort?: number) {
     if (cpl === undefined) {
       const d = isString(dKey) ? compiler().object() : compiler().array();
       cpl = isString(sKey) ? d.from.object() : d.from.array();
@@ -326,7 +347,7 @@ function fieldCompiler(logger = new CompileLogger()) {
 
     if (group) grouped = true;
     const groupFn = group === true ? undefined : group;
-    return cpl.builder.add(sKey, dKey, mapper, groupFn);
+    return cpl.builder.add(sKey, dKey, mapper, groupFn, sort);
   }
 
   function exclude(dKey: Index) {
@@ -471,13 +492,34 @@ function groupObjects(groupBy: string[], aggregate: { key: string; fn: Accumulat
   return result;
 }
 
+function sortObjects(sortBy: { key: string; order: 1 | -1 }[], data: ArrayData) {
+  function cmp(a: any, b: any) {
+    for (let { key, order } of sortBy) {
+      const va = a[key];
+      const vb = b[key];
+
+      let r = 0;
+      if (typeof va === 'string') {
+        r = va.localeCompare(vb);
+      } else {
+        //TODO
+        r = va - vb;
+      }
+
+      if (r !== 0) return r * order;
+    }
+    return 0;
+  }
+  return data.sort(cmp);
+}
+
 function objectReader<D>(query: FieldQuery<string, D>, wb: WriterBuilder<string, D>): SelectorFn {
-  const { filter, groups, selectAll } = query;
+  const { filter, groups, selectAll, sortBy } = query;
   const writer = wb(query);
 
   const fn: SelectorFn = (src: Data) => {
     if (Array.isArray(src)) {
-      const aDest: ArrayData = [];
+      let aDest: ArrayData = [];
 
       src.forEach((s) => {
         const v = fn(s);
@@ -488,7 +530,11 @@ function objectReader<D>(query: FieldQuery<string, D>, wb: WriterBuilder<string,
 
       // TODO multi-level arrays
       if (groups) {
-        return groupObjects(groups.groupBy, groups.aggregate, aDest);
+        aDest = groupObjects(groups.groupBy, groups.aggregate, aDest);
+      }
+
+      if (sortBy) {
+        aDest = sortObjects(sortBy, aDest);
       }
 
       return aDest;

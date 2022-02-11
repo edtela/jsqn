@@ -104,7 +104,7 @@ export const TEST_CASES: { comment: string; selector?: Selector; result?: Data }
   },
   {
     comment:
-      'Aggregation is specified by providing an aggregation function in one of the properties. Properties that have no aggregation function are grouped',
+      'Aggregation is specified by setting selection to an aggregation function. Properties that have no aggregation function are grouped',
     selector: { kind: true, weight: 'sum', '?': { kind: { '!': 'lion' } } },
     result: [
       { kind: 'dog', weight: 30 },
@@ -120,6 +120,28 @@ export const TEST_CASES: { comment: string; selector?: Selector; result?: Data }
     result: [
       { kind: 'dog', names: ['LUNA', 'BOBO'] },
       { kind: 'cat', names: ['OLA'] },
+    ],
+  },
+  {
+    comment: '## Sorting',
+  },
+  {
+    comment:
+      'Sorting is specified by setting selection to a number. A negative number specifies descending order. The absolute value of the number specifies the order of properties when sorting by multiple properties. The following sorts first by **kind** ascending, then by **weight** descdending ',
+    selector: { name: true, kind: 1, weight: -2, '?': { kind: ['cat', 'dog'] } },
+    result: [
+      { kind: 'cat', name: 'Ola', weight: 5 },
+      { kind: 'dog', name: 'Bobo', weight: 20 },
+      { kind: 'dog', name: 'Luna', weight: 10 },
+    ],
+  },
+  {
+    comment: 'Data can be transformed prior to sorting by specifying transforms after the sort',
+    selector: { name: true, kind: [1, 'uppercase', []], weight: -2, '?': { kind: ['cat', 'dog'] } },
+    result: [
+      { kind: 'CAT', name: 'Ola', weight: 5 },
+      { kind: 'DOG', name: 'Bobo', weight: 20 },
+      { kind: 'DOG', name: 'Luna', weight: 10 },
     ],
   },
 ];

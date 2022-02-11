@@ -87,7 +87,7 @@ Selector: { "name": true, "?": [ { "kind": "lion" }, { "name": "Ola" } ] }
 Output: [ { "name": "Ola" }, { "name": "King" } ]
 ```
 ## Aggregation
-Aggregation is specified by providing an aggregation function in one of the properties. Properties that have no aggregation function are grouped
+Aggregation is specified by setting selection to an aggregation function. Properties that have no aggregation function are grouped
 ```
 Selector: { "kind": true, "weight": "sum", "?": { "kind": { "!": "lion" } } }
 Output: [ { "kind": "dog", "weight": 30 }, { "kind": "cat", "weight": 5 } ]
@@ -96,4 +96,15 @@ Data can be transformed prior to aggregation by specifying transforms after the 
 ```
 Selector: { "names": [ "values", "uppercase", [ "name" ] ], "kind": { "?": { "!": "lion" } } }
 Output: [ { "kind": "dog", "names": [ "LUNA", "BOBO" ] }, { "kind": "cat", "names": [ "OLA" ] } ]
+```
+## Sorting
+Sorting is specified by setting selection to a number. A negative number specifies descending order. The absolute value of the number specifies the order of properties when sorting by multiple properties. The following sorts first by **kind** ascending, then by **weight** descdending 
+```
+Selector: { "name": true, "kind": 1, "weight": -2, "?": { "kind": [ "cat", "dog" ] } }
+Output: [ { "kind": "cat", "name": "Ola", "weight": 5 }, { "kind": "dog", "name": "Bobo", "weight": 20 }, { "kind": "dog", "name": "Luna", "weight": 10 } ]
+```
+Data can be transformed prior to sorting by specifying transforms after the sort
+```
+Selector: { "name": true, "kind": [ 1, "uppercase", [] ], "weight": -2, "?": { "kind": [ "cat", "dog" ] } }
+Output: [ { "kind": "CAT", "name": "Ola", "weight": 5 }, { "kind": "DOG", "name": "Bobo", "weight": 20 }, { "kind": "DOG", "name": "Luna", "weight": 10 } ]
 ```
