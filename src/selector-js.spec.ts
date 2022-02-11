@@ -24,48 +24,6 @@ const customMatchers = {
   },
 };
 
-describe('Copy Selector', () => {
-  beforeEach(function () {
-    jasmine.addMatchers(customMatchers);
-  });
-
-  it('should copy object to array', () => {
-    const source = { a: 5, b: 6, c: 7 };
-    const selector = { '0': ['a'], '2': ['b'] };
-    const expected = [5, null, 6];
-
-    const result = resolver.compile(selector)(source);
-    expect(result).toDeepEqual(expected);
-  });
-
-  it('should copy array to object', () => {
-    const source = [5, 6, 7];
-    const selector = { a: [0], b: [2] };
-    const expected = { a: 5, b: 7 };
-
-    const result = resolver.compile(selector)(source);
-    expect(result).toDeepEqual(expected);
-  });
-
-  it('should copy array to array', () => {
-    const source = [5, 6, 7];
-    const selector = { '1': [0], '2': [1] };
-    const expected = [null, 5, 6];
-
-    const result = resolver.compile(selector)(source);
-    expect(result).toDeepEqual(expected);
-  });
-
-  it('should use negative indices to specify ordering', () => {
-    const source = [5, 6, 7];
-    const selector = { '-1': [0], '-2': [1] };
-    const expected = [5, 6];
-
-    const result = resolver.compile(selector)(source);
-    expect(result).toDeepEqual(expected);
-  });
-});
-
 describe('ALL', () => {
   beforeEach(function () {
     jasmine.addMatchers(customMatchers);

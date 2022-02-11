@@ -144,4 +144,39 @@ export const TEST_CASES: { comment: string; selector?: Selector; result?: Data }
       { kind: 'DOG', name: 'Luna', weight: 10 },
     ],
   },
+  {
+    comment: '## Arrays',
+  },
+  {
+    comment:
+      'Arrays can be manipulated just like objects. If keys of a selector are numeric, the result is an array rather than object. The following copies an object to an array',
+    selector: { 0: { 0: ['kind'], 1: ['name'] } },
+    result: [['dog', 'Luna']],
+  },
+  {
+    comment:
+      'When indexed with positive numbers, the resulting array is considered a tuple, i.e. indices specified exist regardless of empty spaces.',
+    selector: { 0: { 1: ['kind'], 3: ['name'], 4: ['not defined'] } },
+    result: [[null, 'dog', null, 'Luna', null]],
+  },
+  {
+    comment: 'Use negative numbers to specify just ordering and ignore undefined values',
+    selector: { 0: { '-10': ['kind'], '-15': ['not defined'], '-20': ['name'], '-21': ['not defined'] } },
+    result: [['dog', 'Luna']],
+  },
+  {
+    comment: 'The following copies an object to an array',
+    selector: { 'First is named': [[0], ['name']], 'Second is': [[1], ['kind']] },
+    result: { 'First is named': 'Luna', 'Second is': 'cat' },
+  },
+  {
+    comment: 'Negative indices access the array from the end',
+    selector: { 'Last is named': [[-1], ['name']], 'Second to last is': [[-2], ['kind']] },
+    result: { 'Last is named': 'King', 'Second to last is': 'dog' },
+  },
+  {
+    comment: 'And this fixes just the second index',
+    selector: { '1': [[0], ['name']], '-200': [[1], ['name']], '-300': [[-2], ['name']] },
+    result: ['Ola', 'Luna', 'Bobo'],
+  },
 ];

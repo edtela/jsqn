@@ -108,3 +108,34 @@ Data can be transformed prior to sorting by specifying transforms after the sort
 Selector: { "name": true, "kind": [ 1, "uppercase", [] ], "weight": -2, "?": { "kind": [ "cat", "dog" ] } }
 Output: [ { "kind": "CAT", "name": "Ola", "weight": 5 }, { "kind": "DOG", "name": "Bobo", "weight": 20 }, { "kind": "DOG", "name": "Luna", "weight": 10 } ]
 ```
+## Arrays
+Arrays can be manipulated just like objects. If keys of a selector are numeric, the result is an array rather than object. The following copies an object to an array
+```
+Selector: { "0": { "0": [ "kind" ], "1": [ "name" ] } }
+Output: [ [ "dog", "Luna" ] ]
+```
+When indexed with positive numbers, the resulting array is considered a tuple, i.e. indices specified exist regardless of empty spaces.
+```
+Selector: { "0": { "1": [ "kind" ], "3": [ "name" ], "4": [ "not defined" ] } }
+Output: [ [ null, "dog", null, "Luna", null ] ]
+```
+Use negative numbers to specify just ordering and ignore undefined values
+```
+Selector: { "0": { "-10": [ "kind" ], "-15": [ "not defined" ], "-20": [ "name" ], "-21": [ "not defined" ] } }
+Output: [ [ "dog", "Luna" ] ]
+```
+The following copies an object to an array
+```
+Selector: { "First is named": [ [ 0 ], [ "name" ] ], "Second is": [ [ 1 ], [ "kind" ] ] }
+Output: { "First is named": "Luna", "Second is": "cat" }
+```
+Negative indices access the array from the end
+```
+Selector: { "Last is named": [ [ -1 ], [ "name" ] ], "Second to last is": [ [ -2 ], [ "kind" ] ] }
+Output: { "Last is named": "King", "Second to last is": "dog" }
+```
+And this fixes just the second index
+```
+Selector: { "1": [ [ 0 ], [ "name" ] ], "-200": [ [ 1 ], [ "name" ] ], "-300": [ [ -2 ], [ "name" ] ] }
+Output: [ "Ola", "Luna", "Bobo" ]
+```

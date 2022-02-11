@@ -438,8 +438,8 @@ function arrayWriter<S extends Index>(query: FieldQuery<S, number>) {
       const r = readers[dKey];
       if (r !== undefined) {
         const { sKey, mapper } = r;
-        value = getter(sKey) ?? null;
-        if (mapper != null) {
+        value = getter(sKey);
+        if (value !== undefined && mapper != null) {
           const mapped = mapper(value);
           if (mapped === undefined) {
             return undefined;
