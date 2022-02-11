@@ -2,21 +2,28 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-import { ArrayData, ArrayOrObject, Data, Index, isIndex, isNumber, isString, isValue, ObjectData, Value } from './data';
+import {
+  ArrayData,
+  Data,
+  Index,
+  isIndex,
+  isKeyValue,
+  isNumber,
+  isPrimitive,
+  isString,
+  KeyValue,
+  newKeyValue,
+} from './data';
 import { Predicate, PREDICATE_OP } from './predicate';
 import { DefaultPredicateResolver, PredicateFn } from './predicate-js';
 import { ComplexSelector, FieldSelector, isTerminal, Selector } from './selector';
 
 export const ALL_OP = '*';
 
-export type SelectorFn = (v: Data) => Data | undefined;
-
-function cloneFn(v: Data): Data {
-  return JSON.parse(JSON.stringify(v));
-}
+export type SelectorFn = (v: unknown) => unknown;
 
 export interface ResolvedTransform {
-  fn: (...input: any) => Data;
+  fn: (...input: any) => unknown;
 }
 
 export interface ResolvedAggregation {
@@ -24,8 +31,8 @@ export interface ResolvedAggregation {
 }
 
 export type Accumulator = () => {
-  add: (v: Data) => void;
-  get: () => Data;
+  add: (v: unknown) => void;
+  get: () => unknown;
 };
 
 export type ResolvedFunction = ResolvedTransform;
@@ -80,7 +87,8 @@ function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): Compil
 
     if (typeof first === 'object') {
       if (Array.isArray(first)) {
-        return { select: true, fn: (v: Data) => first[0] };
+        //TODO
+        return { select: true, fn: (v: unknown) => first[0] };
       }
       return compileSelector(first, r);
     }
@@ -111,7 +119,7 @@ function compileComplexSelector(s: ComplexSelector, r: SelectorResolver): Compil
   const cr2 = compileFieldSelector({ '0': second }, r);
 
   //TODO
-  const fn = (v: Data) => {
+  const fn = (v: unknown) => {
     return (<any>cr2.fn?.(v))?.[0];
   };
 
@@ -178,7 +186,7 @@ function compileFunction(fnName: string, fnArgs: ArrayData, resolver: SelectorRe
   const [key, index] = argFns[0];
   return {
     select: key,
-    fn: function (v: Data) {
+    fn: function (v: unknown) {
       args[index] = v;
       return fn(...args);
     },
@@ -351,12 +359,12 @@ function fieldCompiler(logger = new CompileLogger()) {
       return cpl.compile();
     }
 
-    return function (src: Data) {
+    return function (src: unknown) {
       if (predicate && !predicate(src)) {
         return undefined;
       }
 
-      if (isValue(src)) {
+      if (isPrimitive(src)) {
         return src;
       }
 
@@ -379,14 +387,14 @@ function fieldCompiler(logger = new CompileLogger()) {
   return { add: add, exclude: exclude, compile: compile, selectAll: selectAll, filter: filter };
 }
 
-type Getter<T> = (k: T) => Data | undefined;
-type WriterBuilder<S, D> = (q: FieldQuery<S, D>) => (g: Getter<S>) => Data | undefined;
+type Getter<T> = (k: T) => unknown;
+type WriterBuilder<S, D> = (q: FieldQuery<S, D>) => (g: Getter<S>) => unknown;
 
 function objectWriter<S extends Index>(query: FieldQuery<S, string>) {
   const { fields } = query;
 
   function writer(getter: Getter<S>) {
-    const dest: ObjectData = {};
+    const dest = newKeyValue<any>();
     for (let i = 0; i < fields.length; i++) {
       const { sKey, dKey, mapper } = fields[i];
       let value = getter(sKey) ?? null;
@@ -420,7 +428,7 @@ function arrayWriter<S extends Index>(query: FieldQuery<S, number>) {
   }
 
   function writter(getter: Getter<S>) {
-    const dest: ArrayData = [];
+    const dest: any[] = [];
     for (let dKey = 0; dKey < readers.length; dKey++) {
       let value;
 
@@ -450,30 +458,29 @@ function arrayWriter<S extends Index>(query: FieldQuery<S, number>) {
   return writter;
 }
 
-function groupObjects(groupBy: string[], aggregate: { key: string; fn: Accumulator }[], data: ArrayData) {
-  const map = new Map<string, { values: ObjectData; aggs: ReturnType<Accumulator>[] }>();
+function groupObjects(groupBy: string[], aggregate: { key: string; fn: Accumulator }[], data: unknown[]) {
+  const map = new Map<string, { values: KeyValue; aggs: ReturnType<Accumulator>[] }>();
 
-  const result: Data[] = [];
+  const result: any[] = [];
   data.forEach((d) => {
-    if (d == null || Array.isArray(d) || isValue(d)) {
+    if (isKeyValue(d)) {
+      const groupValues = groupBy.map((g) => d[g]);
+      const groupId = groupValues.toString();
+      let groupData = map.get(groupId);
+      if (groupData === undefined) {
+        const values = groupBy.reduce((p, c, i) => {
+          p[c] = groupValues[i];
+          return p;
+        }, newKeyValue());
+
+        groupData = { values: values, aggs: aggregate.map(({ fn }) => fn()) };
+        map.set(groupId, groupData);
+      }
+      const aggs = groupData.aggs;
+      aggregate.forEach(({ key }, i) => aggs[i].add(d[key]));
+    } else {
       result.push(d);
-      return;
     }
-
-    const groupValues = groupBy.map((g) => d[g]);
-    const groupId = groupValues.toString();
-    let groupData = map.get(groupId);
-    if (groupData === undefined) {
-      const values = groupBy.reduce((p, c, i) => {
-        p[c] = groupValues[i];
-        return p;
-      }, <ObjectData>{});
-
-      groupData = { values: values, aggs: aggregate.map(({ fn }) => fn()) };
-      map.set(groupId, groupData);
-    }
-    const aggs = groupData.aggs;
-    aggregate.forEach(({ key }, i) => aggs[i].add(d[key]));
   });
 
   map.forEach(({ values, aggs }) => aggregate.forEach(({ key }, i) => (values[key] = aggs[i].get())));
@@ -481,7 +488,7 @@ function groupObjects(groupBy: string[], aggregate: { key: string; fn: Accumulat
   return result;
 }
 
-function sortObjects(sortBy: { key: string; order: 1 | -1 }[], data: ArrayData) {
+function sortObjects(sortBy: { key: string; order: 1 | -1 }[], data: unknown[]) {
   function cmp(a: any, b: any) {
     for (let { key, order } of sortBy) {
       const va = a[key];
@@ -506,9 +513,9 @@ function objectReader<D>(query: FieldQuery<string, D>, wb: WriterBuilder<string,
   const { filter, groups, selectAll, sortBy } = query;
   const writer = wb(query);
 
-  const fn: SelectorFn = (src: Data) => {
+  const fn: SelectorFn = (src: unknown) => {
     if (Array.isArray(src)) {
-      let aDest: ArrayData = [];
+      let aDest: any[] = [];
 
       src.forEach((s) => {
         const v = fn(s);
@@ -533,21 +540,20 @@ function objectReader<D>(query: FieldQuery<string, D>, wb: WriterBuilder<string,
       return undefined;
     }
 
-    if (isValue(src)) {
-      return writer(terminalGetter(src));
+    if (isKeyValue(src)) {
+      const dest = writer(objectGetter(src));
+      if (selectAll && isKeyValue(dest)) {
+        const { mapper, except } = selectAll;
+        Object.keys(src).forEach((k) => {
+          if (dest[k] === undefined && !except.has(k)) {
+            dest[k] = (mapper ? mapper(src[k]) : src[k]) ?? null;
+          }
+        });
+      }
+      return dest;
     }
 
-    const dest = writer(objectGetter(src));
-    if (selectAll && dest != null && typeof dest === 'object' && !Array.isArray(dest)) {
-      const { mapper, except } = selectAll;
-      Object.keys(src).forEach((k) => {
-        if (dest[k] === undefined && !except.has(k)) {
-          dest[k] = (mapper ? mapper(src[k]) : src[k]) ?? null;
-        }
-      });
-    }
-
-    return dest;
+    return writer(terminalGetter(src));
   };
   return fn;
 }
@@ -556,8 +562,8 @@ function arrayReader<S, D>(query: FieldQuery<number, D>, wb: WriterBuilder<numbe
   const predicate = query.filter;
   const writer = wb(query);
 
-  return (src: Data) => {
-    if (isValue(src)) {
+  return (src: unknown) => {
+    if (isPrimitive(src)) {
       return writer(terminalGetter(src));
     }
     let aSrc = Array.isArray(src) ? src : src == null ? [] : [src];
@@ -568,9 +574,9 @@ function arrayReader<S, D>(query: FieldQuery<number, D>, wb: WriterBuilder<numbe
   };
 }
 
-const arrayGetter = (a: ArrayData) => (k: number) => k < 0 ? a[a.length + k] : a[k];
-const objectGetter = (o: ObjectData) => (k: string) => o[k];
-const terminalGetter = (o: Value) => (k: Index) => o;
+const arrayGetter = (a: Array<unknown>) => (k: number) => k < 0 ? a[a.length + k] : a[k];
+const objectGetter = (o: KeyValue) => (k: string) => o[k];
+const terminalGetter = (o: unknown) => (k?: Index) => o;
 
 export class DefaultSelectorResolver {
   predicateResolver = new DefaultPredicateResolver();
@@ -585,8 +591,8 @@ export class DefaultSelectorResolver {
 
     if (name === 'values') {
       return () => {
-        let v: ArrayData = [];
-        return { add: (a: Data) => v.push(a), get: () => v };
+        let v: any[] = [];
+        return { add: (a: unknown) => v.push(a), get: () => v };
       };
     }
 

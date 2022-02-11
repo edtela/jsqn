@@ -5,7 +5,7 @@
 import { Data } from './data';
 import { AndPredicate, isValuePredicate, NOT_OP, OrPredicate, Predicate } from './predicate';
 
-export type PredicateFn = (v: Data) => boolean;
+export type PredicateFn = (v: unknown) => boolean;
 export type PredicateCompiler = (p: Predicate, r: PredicateResolver) => PredicateFn;
 
 export interface PredicateResolver {
@@ -15,7 +15,7 @@ export interface PredicateResolver {
 
 export function compilePredicate(p: Predicate, r: PredicateResolver): PredicateFn {
   if (isValuePredicate(p)) {
-    return (v: any) => v == p;
+    return (v: unknown) => v == p;
   }
 
   if (Array.isArray(p)) {

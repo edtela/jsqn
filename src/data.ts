@@ -16,6 +16,20 @@ export type ArrayData = Array<Data>;
 
 export type Data = Value | ObjectData | ArrayData;
 
+export type Primitive = undefined | null | boolean | string | number;
+export function isPrimitive(p: unknown): p is Primitive {
+  return p == null || !(typeof p === 'object' || typeof p === 'function');
+}
+
+export type KeyValue = { [k: string]: unknown };
+export function isKeyValue(v: unknown): v is KeyValue {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
+export function newKeyValue<T>(): { [k: string]: T } {
+  return {};
+}
+
 export type Index = string | number;
 
 export function isIndex(v: unknown): v is Index {
