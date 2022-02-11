@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-import { ComplexSelector } from "./selector";
+import { isValue, Value } from './data';
+import { ComplexSelector } from './selector';
 
-export const PREDICATE_OP = "?";
-export const NOT_OP = "!";
+export const PREDICATE_OP = '?';
+export const NOT_OP = '!';
 
-export type ValuePredicate = null | string | number | boolean;
+export type ValuePredicate = Value;
 
 export function isValuePredicate(p: Predicate): p is ValuePredicate {
-  return p == null || typeof p != "object";
+  return isValue(p);
 }
 
 export interface AndPredicate {

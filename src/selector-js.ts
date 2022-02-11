@@ -2,21 +2,10 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-import {
-  ArrayData,
-  ArrayOrObject,
-  Data,
-  Index,
-  isIndex,
-  isNumber,
-  isString,
-  isTerminal,
-  ObjectData,
-  TerminalData,
-} from './data';
+import { ArrayData, ArrayOrObject, Data, Index, isIndex, isNumber, isString, isValue, ObjectData, Value } from './data';
 import { Predicate, PREDICATE_OP } from './predicate';
 import { DefaultPredicateResolver, PredicateFn } from './predicate-js';
-import { ComplexSelector, FieldSelector, isTerminalSelector, Selector } from './selector';
+import { ComplexSelector, FieldSelector, isTerminal, Selector } from './selector';
 
 export const ALL_OP = '*';
 
@@ -367,7 +356,7 @@ function fieldCompiler(logger = new CompileLogger()) {
         return undefined;
       }
 
-      if (isTerminal(src)) {
+      if (isValue(src)) {
         return src;
       }
 
@@ -466,7 +455,7 @@ function groupObjects(groupBy: string[], aggregate: { key: string; fn: Accumulat
 
   const result: Data[] = [];
   data.forEach((d) => {
-    if (d == null || Array.isArray(d) || isTerminal(d)) {
+    if (d == null || Array.isArray(d) || isValue(d)) {
       result.push(d);
       return;
     }
@@ -544,7 +533,7 @@ function objectReader<D>(query: FieldQuery<string, D>, wb: WriterBuilder<string,
       return undefined;
     }
 
-    if (isTerminal(src)) {
+    if (isValue(src)) {
       return writer(terminalGetter(src));
     }
 
@@ -568,7 +557,7 @@ function arrayReader<S, D>(query: FieldQuery<number, D>, wb: WriterBuilder<numbe
   const writer = wb(query);
 
   return (src: Data) => {
-    if (isTerminal(src)) {
+    if (isValue(src)) {
       return writer(terminalGetter(src));
     }
     let aSrc = Array.isArray(src) ? src : src == null ? [] : [src];
@@ -581,7 +570,7 @@ function arrayReader<S, D>(query: FieldQuery<number, D>, wb: WriterBuilder<numbe
 
 const arrayGetter = (a: ArrayData) => (k: number) => k < 0 ? a[a.length + k] : a[k];
 const objectGetter = (o: ObjectData) => (k: string) => o[k];
-const terminalGetter = (o: TerminalData) => (k: Index) => o;
+const terminalGetter = (o: Value) => (k: Index) => o;
 
 export class DefaultSelectorResolver {
   predicateResolver = new DefaultPredicateResolver();
@@ -630,7 +619,7 @@ export class DefaultSelectorResolver {
   }
 
   compile(s: Selector) {
-    if (isTerminalSelector(s) || Array.isArray(s)) {
+    if (isTerminal(s) || Array.isArray(s)) {
       throw new Error('Method not implemented.');
     }
     return compileFieldSelector(s, this).fn ?? ((v: Data) => null);

@@ -2,16 +2,16 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-import { Data, isTerminal } from './data';
+import { Data, isValue } from './data';
 
 export function getKey(v: Data, key: string) {
-  if (isTerminal(v)) return v;
+  if (isValue(v)) return v;
   if (Array.isArray(v)) return null;
   return v[key] ?? null;
 }
 
 export function getIndex(data: Data, index: number) {
-  if (isTerminal(data)) return data;
+  if (isValue(data)) return data;
   if (Array.isArray(data)) return data[index] ?? null;
   return null;
 }

@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-export type TerminalData = null | boolean | string | number;
+export type Value = null | boolean | string | number;
 
-export function isTerminal(p: Data): p is TerminalData {
+export function isValue(p: Data): p is Value {
   return p == null || typeof p != 'object';
 }
 
@@ -14,7 +14,7 @@ export interface ObjectData {
 
 export type ArrayData = Array<Data>;
 
-export type Data = TerminalData | ObjectData | ArrayData;
+export type Data = Value | ObjectData | ArrayData;
 
 export type Index = string | number;
 
