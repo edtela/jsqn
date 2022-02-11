@@ -149,7 +149,7 @@ export const TEST_CASES: { comment: string; selector?: Selector; result?: Data }
   },
   {
     comment:
-      'Arrays can be manipulated just like objects. If keys of a selector are numeric, the result is an array rather than object. The following copies an object to an array',
+      'Arrays can be manipulated just like objects. If keys of a selector are numeric, the result is an array rather than object. The following copies object to array',
     selector: { 0: { 0: ['kind'], 1: ['name'] } },
     result: [['dog', 'Luna']],
   },
@@ -165,7 +165,7 @@ export const TEST_CASES: { comment: string; selector?: Selector; result?: Data }
     result: [['dog', 'Luna']],
   },
   {
-    comment: 'The following copies an object to an array',
+    comment: 'The following copies array to object',
     selector: { 'First is named': [[0], ['name']], 'Second is': [[1], ['kind']] },
     result: { 'First is named': 'Luna', 'Second is': 'cat' },
   },
