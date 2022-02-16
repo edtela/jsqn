@@ -1,7 +1,7 @@
 # jsqn
 JSON Query Notation
 Example Data: 
-```
+```json
 [
  {
   "kind": "dog",
